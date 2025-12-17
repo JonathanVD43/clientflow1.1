@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { getClient } from "@/lib/db/clients";
 import { listDocumentRequests } from "@/lib/db/documentRequests";
-import { updateClientAction, deleteClientAction } from "./actions";
+import {
+  updateClientAction,
+  deleteClientAction,
+  updateClientDueSettingsAction,
+} from "./actions";
+
 import {
   addDocumentRequestAction,
   updateDocumentRequestAction,
@@ -11,12 +16,42 @@ import {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const TIMEZONE_OPTIONS = [
+  "Africa/Johannesburg",
+  "UTC",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "America/Toronto",
+  "Asia/Dubai",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+] as const;
+
+const SAVED_MESSAGES: Record<string, string> = {
+  due: "Due settings successfully saved",
+  client: "Client successfully updated",
+  "doc-added": "Document successfully added",
+  "doc-updated": "Document successfully updated",
+  "doc-deleted": "Document successfully deleted",
+};
+
 export default async function ClientDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ dueError?: string; saved?: string }>;
 }) {
   const { id } = await params;
+  const sp = (await searchParams) ?? {};
+  const dueError = sp.dueError ? decodeURIComponent(sp.dueError) : null;
+  const saved = sp.saved ?? null;
 
   if (!UUID_RE.test(id)) {
     return (
@@ -36,6 +71,11 @@ export default async function ClientDetailPage({
   const client = await getClient(id);
   const docs = await listDocumentRequests(id);
 
+  const currentTz = (client.due_timezone ?? "Africa/Johannesburg").trim();
+  const isKnownTz = (TIMEZONE_OPTIONS as readonly string[]).includes(currentTz);
+
+  const successMessage = saved ? SAVED_MESSAGES[saved] : null;
+
   return (
     <main className="p-6 max-w-2xl space-y-6">
       {/* Header */}
@@ -51,6 +91,81 @@ export default async function ClientDetailPage({
           </div>
         </div>
       </div>
+
+      {/* ✅ Global success banner (works for ALL forms) */}
+      {successMessage ? (
+        <div className="border border-green-300 bg-green-50 text-green-800 rounded-lg p-3 text-sm">
+          {successMessage} ✅
+        </div>
+      ) : null}
+
+      {/* Due settings */}
+      <section className="space-y-3 border rounded-xl p-4">
+        <h2 className="text-lg font-semibold">Due settings</h2>
+
+        {/* Keep due errors here (specific to this section) */}
+        {dueError ? (
+          <div className="border border-red-300 bg-red-50 text-red-700 rounded-lg p-3 text-sm">
+            {dueError}
+          </div>
+        ) : null}
+
+        <form
+          action={updateClientDueSettingsAction.bind(null, client.id)}
+          className="space-y-3"
+        >
+          <div className="space-y-1">
+            <label className="text-sm">Due day of month</label>
+            <select
+              name="due_day_of_month"
+              defaultValue={String(client.due_day_of_month ?? 25)}
+              className="w-full border rounded-lg p-2"
+            >
+              {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                <option key={d} value={String(d)}>
+                  {d}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs opacity-60">
+              If a month has fewer days (e.g. February), it uses the last day of
+              that month.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm">Timezone</label>
+
+            <select
+              name="due_timezone_select"
+              defaultValue={isKnownTz ? currentTz : "__manual__"}
+              className="w-full border rounded-lg p-2"
+            >
+              {TIMEZONE_OPTIONS.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+              <option value="__manual__">Other…</option>
+            </select>
+
+            <input
+              name="due_timezone_manual"
+              defaultValue={isKnownTz ? "" : currentTz}
+              placeholder='e.g. "America/Sao_Paulo"'
+              className="w-full border rounded-lg p-2"
+            />
+
+            <p className="text-xs opacity-60">
+              Choose from the list. If you pick “Other…”, type an IANA timezone.
+            </p>
+          </div>
+
+          <button className="border rounded-lg px-4 py-2">
+            Save due settings
+          </button>
+        </form>
+      </section>
 
       {/* Documents required */}
       <section className="space-y-4 border rounded-xl p-4">
@@ -86,9 +201,7 @@ export default async function ClientDetailPage({
             />
           </div>
 
-          <button className="border rounded-lg px-4 py-2">
-            Add document
-          </button>
+          <button className="border rounded-lg px-4 py-2">Add document</button>
         </form>
 
         <div className="border-t pt-4" />
@@ -145,9 +258,7 @@ export default async function ClientDetailPage({
                   </div>
 
                   <div className="flex items-center gap-3">
-                    <button className="border rounded-lg px-4 py-2">
-                      Save
-                    </button>
+                    <button className="border rounded-lg px-4 py-2">Save</button>
 
                     <span className="text-xs opacity-60">
                       {d.active ? "Visible" : "Hidden"} ·{" "}

@@ -22,7 +22,8 @@ export async function addDocumentRequestAction(
     description: descriptionRaw ? descriptionRaw : null,
   });
 
-  redirect(`/clients/${clientId}`);
+  // ✅ triggers "Document successfully added"
+  redirect(`/clients/${clientId}?saved=doc-added`);
 }
 
 export async function updateDocumentRequestAction(
@@ -45,10 +46,16 @@ export async function updateDocumentRequestAction(
     active,
   });
 
-  redirect(`/clients/${clientId}`);
+  // ✅ triggers "Document successfully updated"
+  redirect(`/clients/${clientId}?saved=doc-updated`);
 }
 
-export async function deleteDocumentRequestAction(clientId: string, docId: string) {
+export async function deleteDocumentRequestAction(
+  clientId: string,
+  docId: string
+) {
   await deleteDocumentRequest(docId);
-  redirect(`/clients/${clientId}`);
+
+  // ✅ triggers "Document successfully deleted"
+  redirect(`/clients/${clientId}?saved=doc-deleted`);
 }

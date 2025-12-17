@@ -21,7 +21,9 @@ export async function listClients() {
   // this query still only fetches the signed-in user's rows.
   const { data, error } = await supabase
     .from("clients")
-    .select("id,name,email,active,portal_enabled,public_token,created_at,updated_at")
+    .select(
+      "id,name,email,active,portal_enabled,public_token,created_at,updated_at"
+    )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -63,8 +65,9 @@ export async function getClient(clientId: string) {
   const { data, error } = await supabase
     .from("clients")
     .select(
-      "id,name,email,phone_number,active,portal_enabled,public_token,notify_by_email,created_at,updated_at"
+      "id,name,email,phone_number,active,portal_enabled,public_token,notify_by_email,due_day_of_month,due_timezone,created_at,updated_at"
     )
+
     .eq("id", clientId)
     .eq("user_id", user.id) // ✅ defense-in-depth + matches RLS intent
     .single();
@@ -82,6 +85,8 @@ export async function updateClient(
     active?: boolean;
     portal_enabled?: boolean;
     notify_by_email?: boolean;
+    due_day_of_month?: number;
+    due_timezone?: string;
   }
 ) {
   if (!UUID_RE.test(clientId)) {
@@ -100,6 +105,10 @@ export async function updateClient(
     update.portal_enabled = patch.portal_enabled;
   if (typeof patch.notify_by_email === "boolean")
     update.notify_by_email = patch.notify_by_email;
+  if (typeof patch.due_day_of_month === "number")
+    update.due_day_of_month = patch.due_day_of_month;
+  if (typeof patch.due_timezone === "string")
+    update.due_timezone = patch.due_timezone.trim();
 
   const { data, error } = await supabase
     .from("clients")
@@ -129,4 +138,19 @@ export async function deleteClient(clientId: string) {
 
   if (error) throw error;
   return { id: clientId };
+}
+
+export async function listClientsWithProgress() {
+  const { supabase, user } = await requireUser();
+
+  const { data, error } = await supabase
+    .from("clients_with_progress")
+    .select(
+      "id,name,email,active,portal_enabled,public_token,created_at,updated_at,due_day_of_month,due_timezone,required_total,required_received"
+    )
+    .eq("user_id", user.id) // defense-in-depth
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
 }
