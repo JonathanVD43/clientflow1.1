@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { createClientAsDevOwner } from "@/lib/db/clients";
+import { createClient } from "@/lib/db/clients";
 
 export async function createClientAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
@@ -10,13 +10,13 @@ export async function createClientAction(formData: FormData) {
 
   if (!name) throw new Error("Name is required");
 
-  const created = await createClientAsDevOwner({
+  const created = await createClient({
     name,
     email: emailRaw ? emailRaw : null,
     phone_number: phoneRaw ? phoneRaw : null,
   });
 
-  if (!created?.id) throw new Error("createClientAsDevOwner returned no id");
+  if (!created?.id) throw new Error("createClient returned no id");
 
   redirect(`/clients/${created.id}`);
 }

@@ -1,15 +1,28 @@
 import Link from "next/link";
-import { listClientsAsDevOwner } from "@/lib/db/clients";
+import { listClients } from "@/lib/db/clients";
+import { supabaseServer } from "@/lib/supabase/server";
 
 export default async function ClientsPage() {
-  const clients = await listClientsAsDevOwner();
+  const supabase = await supabaseServer();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  console.log("CLIENTS ROWS:", clients);
+  const clients = await listClients();
 
   return (
     <main className="p-6 max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Clients</h1>
+        <div className="space-y-1">
+          <h1 className="text-xl font-semibold">Clients</h1>
+          <div className="text-xs font-mono opacity-60">
+            signed in as: {user?.email ?? "(unknown)"} ({user?.id ?? "no-user"})
+          </div>
+          <Link className="underline text-sm" href="/logout">
+            Logout
+          </Link>
+        </div>
+
         <Link className="underline" href="/clients/new">
           Add client
         </Link>
@@ -32,12 +45,6 @@ export default async function ClientsPage() {
                     <div className="font-medium">{c.name}</div>
                     {c.email ? (
                       <div className="text-sm opacity-70">{c.email}</div>
-                    ) : null}
-
-                    {!c.id ? (
-                      <div className="text-sm text-red-600">
-                        Missing id! (this row should never exist)
-                      </div>
                     ) : null}
 
                     <div className="text-xs font-mono opacity-60">

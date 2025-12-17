@@ -1,19 +1,28 @@
 import { supabaseServer } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
 
-export async function listClients() {
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function requireUser() {
   const supabase = await supabaseServer();
-
   const {
     data: { user },
-    error: userErr,
+    error,
   } = await supabase.auth.getUser();
 
-  if (userErr || !user) throw new Error("Not authenticated");
+  if (error || !user) throw new Error("Not authenticated");
+  return { supabase, user };
+}
 
+export async function listClients() {
+  const { supabase, user } = await requireUser();
+
+  // ✅ defense-in-depth: even if you accidentally bypass RLS elsewhere,
+  // this query still only fetches the signed-in user's rows.
   const { data, error } = await supabase
     .from("clients")
     .select("id,name,email,active,portal_enabled,public_token,created_at,updated_at")
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -25,14 +34,7 @@ export async function createClient(input: {
   email?: string | null;
   phone_number?: string | null;
 }) {
-  const supabase = await supabaseServer();
-
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr || !user) throw new Error("Not authenticated");
+  const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase
     .from("clients")
@@ -47,78 +49,16 @@ export async function createClient(input: {
     .single();
 
   if (error) throw error;
-  if (!data) throw new Error("Insert succeeded but no row returned");
-
-  return data; // ✅ fixes “void” return
-}
-
-export async function getClient(clientId: string) {
-  const supabase = await supabaseServer();
-
-  const { data, error } = await supabase
-    .from("clients")
-    .select(
-      "id,name,email,phone_number,active,portal_enabled,public_token,notify_by_email,created_at,updated_at"
-    )
-    .eq("id", clientId)
-    .single();
-
-  if (error) throw error;
-  return data;
-}
-
-export async function createClientAsDevOwner(input: {
-  name: string;
-  email?: string | null;
-  phone_number?: string | null;
-}) {
-  const ownerId = process.env.DEV_OWNER_USER_ID;
-  if (!ownerId) throw new Error("Missing DEV_OWNER_USER_ID");
-
-  const supabase = supabaseAdmin();
-
-  const { data, error } = await supabase
-    .from("clients")
-    .insert({
-      user_id: ownerId,
-      name: input.name.trim(),
-      email: input.email?.trim() || null,
-      phone_number: input.phone_number?.trim() || null,
-    })
-    .select("id") // ensure id is returned
-    .maybeSingle(); // slightly safer than single() during weird responses
-
-  if (error) throw error;
   if (!data?.id) throw new Error("Insert succeeded but no id returned");
-
   return data; // { id }
 }
 
-export async function listClientsAsDevOwner() {
-  const ownerId = process.env.DEV_OWNER_USER_ID;
-  if (!ownerId) throw new Error("Missing DEV_OWNER_USER_ID");
-
-  const supabase = supabaseAdmin();
-
-  const { data, error } = await supabase
-    .from("clients")
-    .select("id,name,email,active,portal_enabled,public_token,created_at,updated_at")
-    .eq("user_id", ownerId)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return data ?? [];
-}
-
-export async function getClientAsDevOwner(clientId: string) {
-  const ownerId = process.env.DEV_OWNER_USER_ID;
-  if (!ownerId) throw new Error("Missing DEV_OWNER_USER_ID");
-
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clientId)) {
+export async function getClient(clientId: string) {
+  if (!UUID_RE.test(clientId)) {
     throw new Error(`Invalid clientId (expected uuid): "${clientId}"`);
   }
 
-  const supabase = supabaseAdmin();
+  const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase
     .from("clients")
@@ -126,10 +66,67 @@ export async function getClientAsDevOwner(clientId: string) {
       "id,name,email,phone_number,active,portal_enabled,public_token,notify_by_email,created_at,updated_at"
     )
     .eq("id", clientId)
-    .eq("user_id", ownerId) // safety filter
+    .eq("user_id", user.id) // ✅ defense-in-depth + matches RLS intent
     .single();
 
   if (error) throw error;
-  if (!data) throw new Error("Client not found");
   return data;
+}
+
+export async function updateClient(
+  clientId: string,
+  patch: {
+    name?: string;
+    email?: string | null;
+    phone_number?: string | null;
+    active?: boolean;
+    portal_enabled?: boolean;
+    notify_by_email?: boolean;
+  }
+) {
+  if (!UUID_RE.test(clientId)) {
+    throw new Error(`Invalid clientId (expected uuid): "${clientId}"`);
+  }
+
+  const { supabase, user } = await requireUser();
+
+  const update: Record<string, unknown> = {};
+  if (typeof patch.name === "string") update.name = patch.name.trim();
+  if ("email" in patch) update.email = patch.email ? patch.email.trim() : null;
+  if ("phone_number" in patch)
+    update.phone_number = patch.phone_number ? patch.phone_number.trim() : null;
+  if (typeof patch.active === "boolean") update.active = patch.active;
+  if (typeof patch.portal_enabled === "boolean")
+    update.portal_enabled = patch.portal_enabled;
+  if (typeof patch.notify_by_email === "boolean")
+    update.notify_by_email = patch.notify_by_email;
+
+  const { data, error } = await supabase
+    .from("clients")
+    .update(update)
+    .eq("id", clientId)
+    .eq("user_id", user.id)
+    .select("id")
+    .single();
+
+  if (error) throw error;
+  if (!data?.id) throw new Error("Update succeeded but no row returned");
+  return data;
+}
+
+export async function deleteClient(clientId: string) {
+  if (!UUID_RE.test(clientId)) {
+    throw new Error(`Invalid clientId (expected uuid): "${clientId}"`);
+  }
+
+  const { supabase, user } = await requireUser();
+
+  const { error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", clientId)
+    .eq("user_id", user.id);
+
+  if (error) throw error;
+  return { id: clientId };
 }
