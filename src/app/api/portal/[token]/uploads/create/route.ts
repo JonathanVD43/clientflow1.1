@@ -1,88 +1,157 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-type CreateUploadBody = {
-  filename?: string;
+type Body = {
+  filename: string;
   mime_type?: string | null;
-  size_bytes?: number;
+  size_bytes?: number | null;
   document_request_id?: string | null;
 };
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function safeFilename(name: string) {
+  // keep it predictable + storage-safe
+  return name.replace(/[^\w.\-()+ ]/g, "_");
+}
+
+function isPostgrestErrorWithCode(
+  e: unknown
+): e is { code: string; message?: string } {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    typeof (e as { code?: unknown }).code === "string"
+  );
+}
 
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ token: string }> }
 ) {
-  const { token } = await ctx.params; // ✅ unwrap params promise
+  const { token } = await ctx.params;
   const cleanToken = (token ?? "").trim();
-
   if (!cleanToken) {
     return NextResponse.json({ error: "Missing token" }, { status: 400 });
   }
 
-  const body = (await req.json().catch(() => null)) as CreateUploadBody | null;
-  if (!body) {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  let body: Body;
+  try {
+    body = (await req.json()) as Body;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
   const filename = String(body.filename ?? "").trim();
   const mime_type = body.mime_type ? String(body.mime_type).trim() : null;
-  const size_bytes = Number(body.size_bytes);
+  const size_bytes =
+    typeof body.size_bytes === "number" ? Math.max(0, body.size_bytes) : null;
+
   const document_request_id = body.document_request_id
     ? String(body.document_request_id).trim()
     : null;
 
   if (!filename) {
-    return NextResponse.json({ error: "filename is required" }, { status: 400 });
+    return NextResponse.json({ error: "Missing filename" }, { status: 400 });
   }
-
-  if (!Number.isFinite(size_bytes) || size_bytes < 0) {
+  if (document_request_id && !UUID_RE.test(document_request_id)) {
     return NextResponse.json(
-      { error: "size_bytes must be a non-negative number" },
+      { error: "Invalid document_request_id" },
       { status: 400 }
     );
   }
-
-  // Basic filename safety (prevents path injection / weird keys)
-  const safeFilename = filename.replace(/[\/\\]/g, "_").slice(0, 200);
 
   const supabase = supabaseAdmin();
 
   // 1) Find client by public_token
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select("id,active,portal_enabled,user_id")
+    .select("id,user_id,active,portal_enabled")
     .eq("public_token", cleanToken)
     .maybeSingle();
 
   if (clientErr) {
     return NextResponse.json({ error: clientErr.message }, { status: 500 });
   }
-
   if (!client) {
     return NextResponse.json({ error: "Invalid token" }, { status: 404 });
   }
-
   if (!client.active || !client.portal_enabled) {
     return NextResponse.json({ error: "Portal disabled" }, { status: 403 });
   }
 
-  // 2) Find or create OPEN submission session for this client
-  const { data: existingSession, error: sessErr } = await supabase
+  // 2) Validate doc request belongs to this client (if provided) + fetch max_files
+  let maxFiles = 1;
+
+  if (document_request_id) {
+    const { data: dr, error: drErr } = await supabase
+      .from("document_requests")
+      .select("id,max_files,active")
+      .eq("id", document_request_id)
+      .eq("client_id", client.id)
+      .eq("user_id", client.user_id)
+      .maybeSingle();
+
+    if (drErr) {
+      return NextResponse.json({ error: drErr.message }, { status: 500 });
+    }
+    if (!dr || dr.active !== true) {
+      return NextResponse.json(
+        { error: "Invalid document request" },
+        { status: 400 }
+      );
+    }
+
+    maxFiles = Math.max(1, Number(dr.max_files ?? 1));
+  }
+
+  // 3) Enforce max_files (PENDING + ACCEPTED count; DENIED doesn't count)
+  if (document_request_id) {
+    const { count, error: countErr } = await supabase
+      .from("uploads")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", client.id)
+      .eq("user_id", client.user_id)
+      .eq("document_request_id", document_request_id)
+      .is("deleted_at", null)
+      .in("status", ["PENDING", "ACCEPTED"]);
+
+    if (countErr) {
+      return NextResponse.json({ error: countErr.message }, { status: 500 });
+    }
+
+    if ((count ?? 0) >= maxFiles) {
+      return NextResponse.json(
+        { error: `Max files reached for this document (max ${maxFiles}).` },
+        { status: 409 }
+      );
+    }
+  }
+
+  // 4) Get-or-create OPEN submission session (REUSE existing to avoid 23505)
+  let sessionId: string | null = null;
+
+  const { data: existingSession, error: sessSelErr } = await supabase
     .from("submission_sessions")
     .select("id")
     .eq("user_id", client.user_id)
     .eq("client_id", client.id)
     .eq("status", "OPEN")
+    .order("opened_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
-  if (sessErr) {
-    return NextResponse.json({ error: sessErr.message }, { status: 500 });
+  if (sessSelErr) {
+    return NextResponse.json({ error: sessSelErr.message }, { status: 500 });
   }
 
-  let sessionId = existingSession?.id;
-
-  if (!sessionId) {
-    const { data: newSession, error: newSessErr } = await supabase
+  if (existingSession?.id) {
+    sessionId = existingSession.id as string;
+  } else {
+    // create one (and if a race causes 23505, re-select)
+    const { data: createdSession, error: sessInsErr } = await supabase
       .from("submission_sessions")
       .insert({
         user_id: client.user_id,
@@ -92,78 +161,89 @@ export async function POST(
       .select("id")
       .single();
 
-    if (newSessErr) {
-      // Possible race condition: two uploads creating session simultaneously.
-      // Retry once.
-      const { data: retry, error: retryErr } = await supabase
+    if (!sessInsErr && createdSession?.id) {
+      sessionId = createdSession.id as string;
+    } else if (
+      isPostgrestErrorWithCode(sessInsErr) &&
+      sessInsErr.code === "23505"
+    ) {
+      const { data: s2, error: s2Err } = await supabase
         .from("submission_sessions")
         .select("id")
         .eq("user_id", client.user_id)
         .eq("client_id", client.id)
         .eq("status", "OPEN")
+        .order("opened_at", { ascending: false })
+        .limit(1)
         .maybeSingle();
 
-      if (retryErr || !retry?.id) {
-        return NextResponse.json({ error: newSessErr.message }, { status: 500 });
+      if (s2Err) {
+        return NextResponse.json({ error: s2Err.message }, { status: 500 });
       }
-
-      sessionId = retry.id;
-    } else {
-      sessionId = newSession.id;
+      sessionId = (s2?.id as string) ?? null;
+    } else if (sessInsErr) {
+      return NextResponse.json({ error: sessInsErr.message }, { status: 500 });
     }
   }
 
-  // 3) Create uploads row (storage_key updated after we pick path)
-  const { data: upload, error: uploadErr } = await supabase
-    .from("uploads")
-    .insert({
-      user_id: client.user_id,
-      client_id: client.id,
-      submission_session_id: sessionId,
-      document_request_id,
-      original_filename: safeFilename,
-      mime_type,
-      size_bytes,
-      status: "PENDING",
-      // storage_key filled after we generate path
-      storage_key: "pending", // temporary non-empty value to satisfy NOT NULL
-    })
-    .select("id,client_id")
-    .single();
-
-  if (uploadErr) {
-    return NextResponse.json({ error: uploadErr.message }, { status: 500 });
+  if (!sessionId) {
+    return NextResponse.json(
+      { error: "Could not resolve submission session" },
+      { status: 500 }
+    );
   }
 
-  // 4) Signed upload URL
-  // Decide bucket name (create this in Supabase Storage)
-  const bucket = "client-uploads";
-  const path = `clients/${upload.client_id}/${upload.id}/${safeFilename}`;
+  // 5) Create upload row ONCE (avoid storage_key null constraint)
+  const uploadId =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : (await import("node:crypto")).randomUUID();
 
-  const { data: signed, error: signedErr } = await supabase.storage
+  const safeName = safeFilename(filename);
+  const storage_key = `clients/${client.id}/${uploadId}/${safeName}`;
+
+  const { error: insErr } = await supabase.from("uploads").insert({
+    id: uploadId,
+    user_id: client.user_id,
+    client_id: client.id,
+    submission_session_id: sessionId,
+    document_request_id,
+    original_filename: filename,
+    storage_key,
+    mime_type,
+    size_bytes,
+    status: "PENDING",
+  });
+
+  if (insErr) {
+    return NextResponse.json({ error: insErr.message }, { status: 500 });
+  }
+
+  // 6) Create signed upload URL
+  const bucket = process.env.NEXT_PUBLIC_UPLOADS_BUCKET ?? "client_uploads";
+
+  const { data: signed, error: signErr } = await supabase.storage
     .from(bucket)
-    .createSignedUploadUrl(path);
+    .createSignedUploadUrl(storage_key);
 
-  if (signedErr) {
-    return NextResponse.json({ error: signedErr.message }, { status: 500 });
-  }
-
-  // 5) Persist storage_key now that we know it
-  const { error: updateErr } = await supabase
-    .from("uploads")
-    .update({ storage_key: path })
-    .eq("id", upload.id);
-
-  if (updateErr) {
-    return NextResponse.json({ error: updateErr.message }, { status: 500 });
+  if (signErr || !signed?.token) {
+    return NextResponse.json(
+      { error: signErr?.message ?? "Could not create signed upload url" },
+      { status: 500 }
+    );
   }
 
   return NextResponse.json({
     upload: {
-      id: upload.id,
+      id: uploadId,
       bucket,
-      storage_key: path,
+      storage_key,
+      document_request_id,
+      submission_session_id: sessionId,
     },
-    signed, // { path, token } etc.
+    signed: {
+      path: storage_key,
+      token: signed.token,
+    },
   });
 }

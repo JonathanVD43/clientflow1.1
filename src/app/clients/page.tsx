@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { listClientsWithProgress } from "@/lib/db/clients";
+import { listClientIdsWithUnseenPendingUploads } from "@/lib/db/uploads";
 
 function formatDDMMYYYY(d: Date) {
   const dd = String(d.getUTCDate()).padStart(2, "0");
@@ -58,18 +59,27 @@ export default async function ClientsPage() {
   } = await supabase.auth.getUser();
 
   const clients = await listClientsWithProgress();
+  const unseenSet = await listClientIdsWithUnseenPendingUploads();
 
   return (
     <main className="p-6 max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h1 className="text-xl font-semibold">Clients</h1>
+
           <div className="text-xs font-mono opacity-60">
             signed in as: {user?.email ?? "(unknown)"} ({user?.id ?? "no-user"})
           </div>
-          <Link className="underline text-sm" href="/logout">
-            Logout
-          </Link>
+
+          <div className="flex gap-3 text-sm pt-1">
+            <Link className="underline" href="/inbox">
+              Inbox
+            </Link>
+
+            <Link className="underline" href="/logout">
+              Logout
+            </Link>
+          </div>
         </div>
 
         <Link className="underline" href="/clients/new">
@@ -95,14 +105,23 @@ export default async function ClientsPage() {
             try {
               nextDue = formatDDMMYYYY(nextDueDateInTimeZone(dueDay, tz));
             } catch {
-              nextDue = "—"; // invalid timezone string
+              nextDue = "—";
             }
+
+            const hasNew = unseenSet.has(c.id);
 
             return (
               <li key={c.id} className="border rounded-xl p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="font-medium truncate">{c.name}</div>
+                    <div className="font-medium truncate flex items-center gap-2">
+                      <span className="truncate">{c.name}</span>
+                      {hasNew ? (
+                        <span className="text-xs border rounded-full px-2 py-0.5">
+                          New
+                        </span>
+                      ) : null}
+                    </div>
 
                     {c.email ? (
                       <div className="text-sm opacity-70 truncate">{c.email}</div>
