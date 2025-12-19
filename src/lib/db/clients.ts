@@ -1,18 +1,7 @@
-import { supabaseServer } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth/require-user";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-async function requireUser() {
-  const supabase = await supabaseServer();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-
-  if (error || !user) throw new Error("Not authenticated");
-  return { supabase, user };
-}
 
 export async function listClients() {
   const { supabase, user } = await requireUser();
