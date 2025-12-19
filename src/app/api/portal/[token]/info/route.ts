@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { errorResponse, successResponse } from "@/lib/api/responses";
 
 export async function GET(
   _req: Request,
@@ -8,9 +8,7 @@ export async function GET(
   const { token } = await ctx.params; // ✅ unwrap params promise
   const cleanToken = (token ?? "").trim();
 
-  if (!cleanToken) {
-    return NextResponse.json({ error: "Missing token" }, { status: 400 });
-  }
+  if (!cleanToken) return errorResponse("Missing token", 400);
 
   const supabase = supabaseAdmin();
 
@@ -20,17 +18,9 @@ export async function GET(
     .eq("public_token", cleanToken)
     .maybeSingle();
 
-  if (clientErr) {
-    return NextResponse.json({ error: clientErr.message }, { status: 500 });
-  }
-
-  if (!client) {
-    return NextResponse.json({ error: "Invalid token" }, { status: 404 });
-  }
-
-  if (!client.active || !client.portal_enabled) {
-    return NextResponse.json({ error: "Portal disabled" }, { status: 403 });
-  }
+  if (clientErr) return errorResponse(clientErr.message, 500);
+  if (!client) return errorResponse("Invalid token", 404);
+  if (!client.active || !client.portal_enabled) return errorResponse("Portal disabled", 403);
 
   const { data: documents, error: docsErr } = await supabase
     .from("document_requests")
@@ -43,11 +33,9 @@ export async function GET(
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
 
-  if (docsErr) {
-    return NextResponse.json({ error: docsErr.message }, { status: 500 });
-  }
+  if (docsErr) return errorResponse(docsErr.message, 500);
 
-  return NextResponse.json({
+  return successResponse({
     client: {
       id: client.id,
       name: client.name,

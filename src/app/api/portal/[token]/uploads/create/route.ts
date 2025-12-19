@@ -1,6 +1,10 @@
-import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isValidUuid } from "@/lib/validation/uuid";
+import {
+  errorResponse,
+  successResponse,
+  validateJsonBody,
+} from "@/lib/api/responses";
 
 type Body = {
   filename: string;
@@ -31,16 +35,11 @@ export async function POST(
 ) {
   const { token } = await ctx.params;
   const cleanToken = (token ?? "").trim();
-  if (!cleanToken) {
-    return NextResponse.json({ error: "Missing token" }, { status: 400 });
-  }
+  if (!cleanToken) return errorResponse("Missing token", 400);
 
-  let body: Body;
-  try {
-    body = (await req.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const parsed = await validateJsonBody<Body>(req);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed;
 
   const filename = String(body.filename ?? "").trim();
   const mime_type = body.mime_type ? String(body.mime_type).trim() : null;
@@ -51,14 +50,9 @@ export async function POST(
     ? String(body.document_request_id).trim()
     : null;
 
-  if (!filename) {
-    return NextResponse.json({ error: "Missing filename" }, { status: 400 });
-  }
+  if (!filename) return errorResponse("Missing filename", 400);
   if (document_request_id && !isValidUuid(document_request_id)) {
-    return NextResponse.json(
-      { error: "Invalid document_request_id" },
-      { status: 400 }
-    );
+    return errorResponse("Invalid document_request_id", 400);
   }
 
   const supabase = supabaseAdmin();
@@ -70,15 +64,9 @@ export async function POST(
     .eq("public_token", cleanToken)
     .maybeSingle();
 
-  if (clientErr) {
-    return NextResponse.json({ error: clientErr.message }, { status: 500 });
-  }
-  if (!client) {
-    return NextResponse.json({ error: "Invalid token" }, { status: 404 });
-  }
-  if (!client.active || !client.portal_enabled) {
-    return NextResponse.json({ error: "Portal disabled" }, { status: 403 });
-  }
+  if (clientErr) return errorResponse(clientErr.message, 500);
+  if (!client) return errorResponse("Invalid token", 404);
+  if (!client.active || !client.portal_enabled) return errorResponse("Portal disabled", 403);
 
   // 2) Validate doc request belongs to this client (if provided) + fetch max_files
   let maxFiles = 1;
@@ -92,15 +80,8 @@ export async function POST(
       .eq("user_id", client.user_id)
       .maybeSingle();
 
-    if (drErr) {
-      return NextResponse.json({ error: drErr.message }, { status: 500 });
-    }
-    if (!dr || dr.active !== true) {
-      return NextResponse.json(
-        { error: "Invalid document request" },
-        { status: 400 }
-      );
-    }
+    if (drErr) return errorResponse(drErr.message, 500);
+    if (!dr || dr.active !== true) return errorResponse("Invalid document request", 400);
 
     maxFiles = Math.max(1, Number(dr.max_files ?? 1));
   }
@@ -116,15 +97,10 @@ export async function POST(
       .is("deleted_at", null)
       .in("status", ["PENDING", "ACCEPTED"]);
 
-    if (countErr) {
-      return NextResponse.json({ error: countErr.message }, { status: 500 });
-    }
+    if (countErr) return errorResponse(countErr.message, 500);
 
     if ((count ?? 0) >= maxFiles) {
-      return NextResponse.json(
-        { error: `Max files reached for this document (max ${maxFiles}).` },
-        { status: 409 }
-      );
+      return errorResponse(`Max files reached for this document (max ${maxFiles}).`, 409);
     }
   }
 
@@ -141,14 +117,11 @@ export async function POST(
     .limit(1)
     .maybeSingle();
 
-  if (sessSelErr) {
-    return NextResponse.json({ error: sessSelErr.message }, { status: 500 });
-  }
+  if (sessSelErr) return errorResponse(sessSelErr.message, 500);
 
   if (existingSession?.id) {
     sessionId = existingSession.id as string;
   } else {
-    // create one (and if a race causes 23505, re-select)
     const { data: createdSession, error: sessInsErr } = await supabase
       .from("submission_sessions")
       .insert({
@@ -175,21 +148,14 @@ export async function POST(
         .limit(1)
         .maybeSingle();
 
-      if (s2Err) {
-        return NextResponse.json({ error: s2Err.message }, { status: 500 });
-      }
+      if (s2Err) return errorResponse(s2Err.message, 500);
       sessionId = (s2?.id as string) ?? null;
     } else if (sessInsErr) {
-      return NextResponse.json({ error: sessInsErr.message }, { status: 500 });
+      return errorResponse(sessInsErr.message, 500);
     }
   }
 
-  if (!sessionId) {
-    return NextResponse.json(
-      { error: "Could not resolve submission session" },
-      { status: 500 }
-    );
-  }
+  if (!sessionId) return errorResponse("Could not resolve submission session", 500);
 
   // 5) Create upload row ONCE (avoid storage_key null constraint)
   const uploadId =
@@ -213,9 +179,7 @@ export async function POST(
     status: "PENDING",
   });
 
-  if (insErr) {
-    return NextResponse.json({ error: insErr.message }, { status: 500 });
-  }
+  if (insErr) return errorResponse(insErr.message, 500);
 
   // 6) Create signed upload URL
   const bucket = process.env.NEXT_PUBLIC_UPLOADS_BUCKET ?? "client_uploads";
@@ -225,13 +189,10 @@ export async function POST(
     .createSignedUploadUrl(storage_key);
 
   if (signErr || !signed?.token) {
-    return NextResponse.json(
-      { error: signErr?.message ?? "Could not create signed upload url" },
-      { status: 500 }
-    );
+    return errorResponse(signErr?.message ?? "Could not create signed upload url", 500);
   }
 
-  return NextResponse.json({
+  return successResponse({
     upload: {
       id: uploadId,
       bucket,
