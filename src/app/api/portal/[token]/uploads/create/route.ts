@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { isValidUuid } from "@/lib/validation/uuid";
 
 type Body = {
   filename: string;
@@ -7,9 +8,6 @@ type Body = {
   size_bytes?: number | null;
   document_request_id?: string | null;
 };
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function safeFilename(name: string) {
   // keep it predictable + storage-safe
@@ -56,7 +54,7 @@ export async function POST(
   if (!filename) {
     return NextResponse.json({ error: "Missing filename" }, { status: 400 });
   }
-  if (document_request_id && !UUID_RE.test(document_request_id)) {
+  if (document_request_id && !isValidUuid(document_request_id)) {
     return NextResponse.json(
       { error: "Invalid document_request_id" },
       { status: 400 }

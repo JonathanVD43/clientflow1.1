@@ -1,13 +1,5 @@
 import { requireUser } from "@/lib/auth/require-user";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function assertUuid(label: string, value: string) {
-  if (!UUID_RE.test(value)) {
-    throw new Error(`Invalid ${label} (expected uuid): "${value}"`);
-  }
-}
+import { assertUuid } from "@/lib/validation/uuid";
 
 /** Core upload row used by user-side pages */
 export type UploadRow = {
@@ -27,9 +19,7 @@ export type UploadRow = {
   deleted_at?: string | null;
 };
 
-export async function listUploadsForClient(
-  clientId: string
-): Promise<UploadRow[]> {
+export async function listUploadsForClient(clientId: string): Promise<UploadRow[]> {
   assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
@@ -66,9 +56,7 @@ export async function getUpload(uploadId: string): Promise<UploadRow> {
   return data as UploadRow;
 }
 
-export async function markUploadViewed(
-  uploadId: string
-): Promise<{ id: string }> {
+export async function markUploadViewed(uploadId: string): Promise<{ id: string }> {
   assertUuid("uploadId", uploadId);
 
   const { supabase, user } = await requireUser();
@@ -84,7 +72,7 @@ export async function markUploadViewed(
     .maybeSingle();
 
   if (error) throw error;
-  return data?.id ? { id: data.id as string } : { id: uploadId };
+  return data?.id ? { id: String(data.id) } : { id: uploadId };
 }
 
 export async function reviewUpload(input: {
@@ -119,7 +107,7 @@ export async function reviewUpload(input: {
 
   if (error) throw error;
   if (!data?.id) throw new Error("Review update failed");
-  return { id: data.id as string };
+  return { id: String(data.id) };
 }
 
 /* =========================
@@ -135,7 +123,6 @@ export type InboxSessionRow = {
   pending_count: number;
   new_count: number;
   last_uploaded_at: string | null;
-  // Helps the UI show “sessionless” items clearly if any remain
   is_fallback_session: boolean;
 };
 
@@ -148,7 +135,7 @@ type InboxUploadJoinRow = {
   submission_session: {
     id: string;
     opened_at: string | null;
-    status: "OPEN" | "FINALIZED" | "EXPIRED" | string;
+    status: string;
     client: {
       id: string;
       name: string | null;
@@ -166,7 +153,6 @@ type ClientRow = {
 export async function listInboxSessions(): Promise<InboxSessionRow[]> {
   const { supabase, user } = await requireUser();
 
-  // Pull pending uploads + their session (if any)
   const { data, error } = await supabase
     .from("uploads")
     .select(
@@ -197,15 +183,12 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
 
   const rows = (data ?? []) as unknown as InboxUploadJoinRow[];
 
-  // We will group by session id when available.
-  // If session is missing (legacy rows), group them under a stable fallback key per client.
   const map = new Map<string, InboxSessionRow>();
 
-  // For fallback grouping we may need client info
+  // Identify fallback client_ids (legacy uploads with no session)
   const fallbackClientIds = new Set<string>();
   for (const r of rows) {
-    if (!r.submission_session?.id && r.client_id)
-      fallbackClientIds.add(r.client_id);
+    if (!r.submission_session?.id) fallbackClientIds.add(r.client_id);
   }
 
   let fallbackClientMap = new Map<string, ClientRow>();
@@ -217,26 +200,26 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
       .in("id", Array.from(fallbackClientIds));
 
     if (cErr) throw cErr;
+
     fallbackClientMap = new Map(
-      (clients ?? []).map((c) => [c.id, c as ClientRow])
+      (clients ?? []).map((c) => [String(c.id), c as ClientRow])
     );
   }
 
   for (const r of rows) {
     const isNew = r.viewed_at == null;
-
     const session = r.submission_session;
     const client = session?.client;
 
-    // Normal path (session exists)
+    // Normal session path
     if (session?.id && client?.id) {
-      const key = session.id;
+      const key = String(session.id);
       const existing = map.get(key);
 
       if (!existing) {
         map.set(key, {
-          session_id: session.id,
-          client_id: client.id,
+          session_id: String(session.id),
+          client_id: String(client.id),
           client_name: client.name ?? "(unnamed)",
           client_email: client.email ?? null,
           opened_at: session.opened_at ?? null,
@@ -253,18 +236,17 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
       continue;
     }
 
-    // Fallback path (no session): group by client_id
-    const cid = r.client_id;
-    if (!cid) continue;
-
+    // Fallback path: group by client_id
+    const cid = String(r.client_id);
     const c = fallbackClientMap.get(cid);
     if (!c) continue;
 
     const key = `fallback:${cid}`;
     const existing = map.get(key);
+
     if (!existing) {
       map.set(key, {
-        session_id: key, // not a real uuid; UI should treat this as “needs migration”
+        session_id: key, // not a real uuid; UI should handle as fallback
         client_id: cid,
         client_name: c.name ?? "(unnamed)",
         client_email: c.email ?? null,
@@ -304,7 +286,9 @@ type SessionWithClientRow = {
   } | null;
 };
 
-export async function listPendingUploadsForSession(sessionId: string): Promise<{
+export async function listPendingUploadsForSession(
+  sessionId: string
+): Promise<{
   session: { id: string; opened_at: string | null; status: string };
   client: { id: string; name: string; email: string | null };
   uploads: InboxUploadRow[];
@@ -350,9 +334,9 @@ export async function listPendingUploadsForSession(sessionId: string): Promise<{
   if (error) throw error;
 
   return {
-    session: { id: s.id, opened_at: s.opened_at ?? null, status: s.status },
+    session: { id: String(s.id), opened_at: s.opened_at ?? null, status: s.status },
     client: {
-      id: s.client.id,
+      id: String(s.client.id),
       name: s.client.name ?? "(unnamed)",
       email: s.client.email ?? null,
     },
@@ -361,17 +345,14 @@ export async function listPendingUploadsForSession(sessionId: string): Promise<{
 }
 
 /**
- * Finds the newest *real* session id for a client.
- * This is what `/inbox/client/[clientId]` should use to redirect.
+ * Finds the newest session id for a client.
+ * Used by `/inbox/client/[clientId]` redirector.
  */
-export async function getLatestSessionIdForClient(
-  clientId: string
-): Promise<string | null> {
+export async function getLatestSessionIdForClient(clientId: string): Promise<string | null> {
   assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
 
-  // Prefer newest session row
   const { data: sess, error: sErr } = await supabase
     .from("submission_sessions")
     .select("id")
@@ -399,12 +380,21 @@ export async function getLatestSessionIdForClient(
   return up?.submission_session_id ? String(up.submission_session_id) : null;
 }
 
-export async function listInboxClientsWithPendingCounts() {
+export async function listInboxClientsWithPendingCounts(): Promise<
+  Array<{
+    client: { id: string; name: string | null; email: string | null };
+    client_id: string;
+    pending_total: number;
+    pending_new: number;
+  }>
+> {
   const { supabase, user } = await requireUser();
+
+  type UploadLite = { client_id: string; viewed_at: string | null };
 
   const { data, error } = await supabase
     .from("uploads")
-    .select("client_id, viewed_at", { count: "exact" })
+    .select("client_id, viewed_at")
     .eq("user_id", user.id)
     .eq("status", "PENDING")
     .is("deleted_at", null);
@@ -416,15 +406,11 @@ export async function listInboxClientsWithPendingCounts() {
     { client_id: string; pending_total: number; pending_new: number }
   >();
 
-  for (const row of data ?? []) {
-    const cid = String((row as { client_id: string }).client_id);
-    const viewed = (row as { viewed_at?: string | null }).viewed_at ?? null;
+  for (const row of (data ?? []) as UploadLite[]) {
+    const cid = String(row.client_id);
+    const viewed = row.viewed_at ?? null;
 
-    const cur = byClient.get(cid) ?? {
-      client_id: cid,
-      pending_total: 0,
-      pending_new: 0,
-    };
+    const cur = byClient.get(cid) ?? { client_id: cid, pending_total: 0, pending_new: 0 };
     cur.pending_total += 1;
     if (!viewed) cur.pending_new += 1;
     byClient.set(cid, cur);
@@ -441,17 +427,21 @@ export async function listInboxClientsWithPendingCounts() {
 
   if (cErr) throw cErr;
 
-  const clientMap = new Map((clients ?? []).map((c) => [c.id, c]));
+  const clientMap = new Map((clients ?? []).map((c) => [String(c.id), c]));
 
   return clientIds
-    .map((id) => ({
-      client: clientMap.get(id),
-      ...byClient.get(id)!,
-    }))
-    .filter((x) => x.client);
+    .map((id) => {
+      const client = clientMap.get(id);
+      if (!client) return null;
+      return { client: client as { id: string; name: string | null; email: string | null }, ...byClient.get(id)! };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
 }
 
-export async function listPendingUploadsForClient(clientId: string) {
+export async function listPendingUploadsForClient(clientId: string): Promise<{
+  client: { id: string; name: string | null; email: string | null };
+  uploads: UploadRow[];
+}> {
   assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
@@ -468,7 +458,7 @@ export async function listPendingUploadsForClient(clientId: string) {
   const { data: uploads, error } = await supabase
     .from("uploads")
     .select(
-      "id,client_id,submission_session_id,document_request_id,original_filename,mime_type,size_bytes,status,denial_reason,uploaded_at,viewed_at,reviewed_at,storage_key"
+      "id,client_id,submission_session_id,document_request_id,original_filename,mime_type,size_bytes,status,denial_reason,uploaded_at,viewed_at,reviewed_at,storage_key,deleted_at"
     )
     .eq("client_id", clientId)
     .eq("user_id", user.id)
@@ -478,10 +468,10 @@ export async function listPendingUploadsForClient(clientId: string) {
 
   if (error) throw error;
 
-  return { client, uploads: uploads ?? [] };
+  return { client: client as { id: string; name: string | null; email: string | null }, uploads: (uploads ?? []) as UploadRow[] };
 }
 
-export async function listClientIdsWithUnseenPendingUploads() {
+export async function listClientIdsWithUnseenPendingUploads(): Promise<Set<string>> {
   const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase
@@ -494,11 +484,12 @@ export async function listClientIdsWithUnseenPendingUploads() {
 
   if (error) throw error;
 
-  return new Set((data ?? []).map((r) => String(r.client_id)));
+  type Row = { client_id: string };
+  return new Set(((data ?? []) as Row[]).map((r) => String(r.client_id)));
 }
 
-export async function getOpenSessionIdForClient(clientId: string) {
-  if (!UUID_RE.test(clientId)) throw new Error("Invalid clientId");
+export async function getOpenSessionIdForClient(clientId: string): Promise<string | null> {
+  assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
 
@@ -513,5 +504,5 @@ export async function getOpenSessionIdForClient(clientId: string) {
     .maybeSingle();
 
   if (error) throw error;
-  return data?.id ?? null;
+  return data?.id ? String(data.id) : null;
 }
