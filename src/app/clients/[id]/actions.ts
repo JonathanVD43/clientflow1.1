@@ -1,3 +1,4 @@
+// src/app/clients/[id]/actions.ts
 "use server";
 
 import { updateClient, deleteClient } from "@/lib/db/clients";
@@ -5,16 +6,21 @@ import { extractClientUpdate, extractDueSettings } from "@/lib/forms/validators"
 import { redirectWithError, redirectWithSuccess } from "@/lib/navigation/redirects";
 
 export async function updateClientAction(clientId: string, formData: FormData) {
-  const patch = extractClientUpdate(formData);
+  try {
+    const patch = extractClientUpdate(formData);
 
-  await updateClient(clientId, {
-    name: patch.name,
-    email: patch.email,
-    phone_number: patch.phone_number,
-    active: patch.active,
-    portal_enabled: patch.portal_enabled,
-    notify_by_email: patch.notify_by_email,
-  });
+    await updateClient(clientId, {
+      name: patch.name,
+      email: patch.email,
+      phone_number: patch.phone_number,
+      active: patch.active,
+      portal_enabled: patch.portal_enabled,
+      notify_by_email: patch.notify_by_email,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Could not save client";
+    redirectWithError(`/clients/${clientId}`, msg);
+  }
 
   redirectWithSuccess(`/clients/${clientId}`, "client");
 }
@@ -35,6 +41,12 @@ export async function updateClientDueSettingsAction(
 }
 
 export async function deleteClientAction(clientId: string) {
-  await deleteClient(clientId);
+  try {
+    await deleteClient(clientId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Could not delete client";
+    redirectWithError(`/clients/${clientId}`, msg);
+  }
+
   redirectWithSuccess("/clients", "deleted");
 }
