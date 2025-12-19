@@ -1,5 +1,7 @@
+// src/lib/db/uploads.ts
 import { requireUser } from "@/lib/auth/require-user";
 import { assertUuid } from "@/lib/validation/uuid";
+import { expectSingleId } from "@/lib/db/query-builder";
 
 /** Core upload row used by user-side pages */
 export type UploadRow = {
@@ -97,17 +99,16 @@ export async function reviewUpload(input: {
     patch.denial_reason = null;
   }
 
-  const { data, error } = await supabase
-    .from("uploads")
-    .update(patch)
-    .eq("id", input.uploadId)
-    .eq("user_id", user.id)
-    .select("id")
-    .single();
-
-  if (error) throw error;
-  if (!data?.id) throw new Error("Review update failed");
-  return { id: String(data.id) };
+  return expectSingleId(
+    supabase
+      .from("uploads")
+      .update(patch)
+      .eq("id", input.uploadId)
+      .eq("user_id", user.id)
+      .select("id")
+      .single(),
+    "Review update failed"
+  );
 }
 
 /* =========================
@@ -260,9 +261,7 @@ export async function listPendingUploadsForSession(sessionId: string): Promise<{
 
   const { data: uploads, error } = await supabase
     .from("uploads")
-    .select(
-      "id,original_filename,uploaded_at,viewed_at,mime_type,size_bytes,document_request_id"
-    )
+    .select("id,original_filename,uploaded_at,viewed_at,mime_type,size_bytes,document_request_id")
     .eq("user_id", user.id)
     .eq("submission_session_id", sessionId)
     .eq("status", "PENDING")
@@ -299,7 +298,9 @@ export async function createSignedDownloadUrl(uploadId: string): Promise<{
 
   if (error) throw error;
 
-  const storageKey = String((data as { storage_key?: unknown })?.storage_key ?? "").trim();
+  const storageKey = String(
+    (data as { storage_key?: unknown })?.storage_key ?? ""
+  ).trim();
   if (!storageKey) throw new Error("Upload is missing storage_key");
 
   // ✅ correct default bucket name
@@ -315,7 +316,9 @@ export async function createSignedDownloadUrl(uploadId: string): Promise<{
   return {
     url: signed.signedUrl,
     mime_type: (data as { mime_type?: string | null }).mime_type ?? null,
-    original_filename: String((data as { original_filename?: unknown }).original_filename ?? ""),
+    original_filename: String(
+      (data as { original_filename?: unknown }).original_filename ?? ""
+    ),
   };
 }
 
@@ -428,6 +431,8 @@ export async function listClientIdsWithUnseenPendingUploads(): Promise<Set<strin
   if (error) throw error;
 
   return new Set(
-    (data ?? []).map((r) => String((r as { client_id?: unknown }).client_id ?? ""))
+    (data ?? []).map((r) =>
+      String((r as { client_id?: unknown }).client_id ?? "")
+    )
   );
 }

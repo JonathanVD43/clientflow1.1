@@ -1,6 +1,7 @@
 // src/lib/db/documentRequests.ts
 import { requireUser } from "@/lib/auth/require-user";
 import { assertUuid } from "@/lib/validation/uuid";
+import { expectSingleId } from "@/lib/db/query-builder";
 
 export async function listDocumentRequests(clientId: string) {
   assertUuid("clientId", clientId);
@@ -31,25 +32,24 @@ export async function createDocumentRequest(input: {
   const title = input.title.trim();
   if (!title) throw new Error("Title is required");
 
-  const { data, error } = await supabase
-    .from("document_requests")
-    .insert({
-      user_id: user.id,
-      client_id: input.clientId,
-      title,
-      description: input.description ?? null,
-      required: true,
-      active: true,
-      max_files: 1,
-      sort_order: 0,
-      allowed_mime_types: null,
-    })
-    .select("id")
-    .single();
-
-  if (error) throw error;
-  if (!data?.id) throw new Error("Insert succeeded but no id returned");
-  return data;
+  return expectSingleId(
+    supabase
+      .from("document_requests")
+      .insert({
+        user_id: user.id,
+        client_id: input.clientId,
+        title,
+        description: input.description ?? null,
+        required: true,
+        active: true,
+        max_files: 1,
+        sort_order: 0,
+        allowed_mime_types: null,
+      })
+      .select("id")
+      .single(),
+    "Insert succeeded but no id returned"
+  );
 }
 
 export async function updateDocumentRequest(input: {
@@ -69,17 +69,16 @@ export async function updateDocumentRequest(input: {
   if (typeof input.required === "boolean") patch.required = input.required;
   if (typeof input.active === "boolean") patch.active = input.active;
 
-  const { data, error } = await supabase
-    .from("document_requests")
-    .update(patch)
-    .eq("id", input.id)
-    .eq("user_id", user.id)
-    .select("id")
-    .single();
-
-  if (error) throw error;
-  if (!data?.id) throw new Error("Update succeeded but no row returned");
-  return data;
+  return expectSingleId(
+    supabase
+      .from("document_requests")
+      .update(patch)
+      .eq("id", input.id)
+      .eq("user_id", user.id)
+      .select("id")
+      .single(),
+    "Update succeeded but no row returned"
+  );
 }
 
 export async function deleteDocumentRequest(id: string) {
