@@ -30,12 +30,12 @@ export async function listUploadsForClient(clientId: string): Promise<UploadRow[
       "id,client_id,submission_session_id,document_request_id,original_filename,mime_type,size_bytes,status,denial_reason,uploaded_at,viewed_at,reviewed_at,deleted_at"
     )
     .eq("client_id", clientId)
-    .eq("user_id", user.id)
+    .eq("user_id", user.id) // defense-in-depth
     .is("deleted_at", null)
     .order("uploaded_at", { ascending: false });
 
   if (error) throw error;
-  return (data ?? []) as UploadRow[];
+  return (data ?? []) as unknown as UploadRow[];
 }
 
 export async function getUpload(uploadId: string): Promise<UploadRow> {
@@ -53,7 +53,7 @@ export async function getUpload(uploadId: string): Promise<UploadRow> {
     .single();
 
   if (error) throw error;
-  return data as UploadRow;
+  return data as unknown as UploadRow;
 }
 
 export async function markUploadViewed(uploadId: string): Promise<{ id: string }> {
@@ -123,31 +123,23 @@ export type InboxSessionRow = {
   pending_count: number;
   new_count: number;
   last_uploaded_at: string | null;
-  is_fallback_session: boolean;
 };
 
 type InboxUploadJoinRow = {
   id: string;
-  client_id: string;
   uploaded_at: string;
   viewed_at: string | null;
   status: "PENDING" | "ACCEPTED" | "DENIED";
   submission_session: {
     id: string;
     opened_at: string | null;
-    status: string;
+    status: "OPEN" | "FINALIZED" | "EXPIRED" | string;
     client: {
       id: string;
       name: string | null;
       email: string | null;
     } | null;
   } | null;
-};
-
-type ClientRow = {
-  id: string;
-  name: string | null;
-  email: string | null;
 };
 
 export async function listInboxSessions(): Promise<InboxSessionRow[]> {
@@ -158,7 +150,6 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
     .select(
       `
       id,
-      client_id,
       uploaded_at,
       viewed_at,
       status,
@@ -176,7 +167,6 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
     )
     .eq("user_id", user.id)
     .eq("status", "PENDING")
-    .is("deleted_at", null)
     .order("uploaded_at", { ascending: false });
 
   if (error) throw error;
@@ -185,76 +175,26 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
 
   const map = new Map<string, InboxSessionRow>();
 
-  // Identify fallback client_ids (legacy uploads with no session)
-  const fallbackClientIds = new Set<string>();
   for (const r of rows) {
-    if (!r.submission_session?.id) fallbackClientIds.add(r.client_id);
-  }
-
-  let fallbackClientMap = new Map<string, ClientRow>();
-  if (fallbackClientIds.size > 0) {
-    const { data: clients, error: cErr } = await supabase
-      .from("clients")
-      .select("id,name,email")
-      .eq("user_id", user.id)
-      .in("id", Array.from(fallbackClientIds));
-
-    if (cErr) throw cErr;
-
-    fallbackClientMap = new Map(
-      (clients ?? []).map((c) => [String(c.id), c as ClientRow])
-    );
-  }
-
-  for (const r of rows) {
-    const isNew = r.viewed_at == null;
     const session = r.submission_session;
     const client = session?.client;
 
-    // Normal session path
-    if (session?.id && client?.id) {
-      const key = String(session.id);
-      const existing = map.get(key);
+    if (!session?.id || !client?.id) continue;
 
-      if (!existing) {
-        map.set(key, {
-          session_id: String(session.id),
-          client_id: String(client.id),
-          client_name: client.name ?? "(unnamed)",
-          client_email: client.email ?? null,
-          opened_at: session.opened_at ?? null,
-          pending_count: 1,
-          new_count: isNew ? 1 : 0,
-          last_uploaded_at: r.uploaded_at ?? null,
-          is_fallback_session: false,
-        });
-      } else {
-        existing.pending_count += 1;
-        if (isNew) existing.new_count += 1;
-      }
-
-      continue;
-    }
-
-    // Fallback path: group by client_id
-    const cid = String(r.client_id);
-    const c = fallbackClientMap.get(cid);
-    if (!c) continue;
-
-    const key = `fallback:${cid}`;
+    const key = session.id;
     const existing = map.get(key);
+    const isNew = r.viewed_at == null;
 
     if (!existing) {
       map.set(key, {
-        session_id: key, // not a real uuid; UI should handle as fallback
-        client_id: cid,
-        client_name: c.name ?? "(unnamed)",
-        client_email: c.email ?? null,
-        opened_at: null,
+        session_id: session.id,
+        client_id: client.id,
+        client_name: client.name ?? "(unnamed)",
+        client_email: client.email ?? null,
+        opened_at: session.opened_at ?? null,
         pending_count: 1,
         new_count: isNew ? 1 : 0,
         last_uploaded_at: r.uploaded_at ?? null,
-        is_fallback_session: true,
       });
     } else {
       existing.pending_count += 1;
@@ -286,9 +226,7 @@ type SessionWithClientRow = {
   } | null;
 };
 
-export async function listPendingUploadsForSession(
-  sessionId: string
-): Promise<{
+export async function listPendingUploadsForSession(sessionId: string): Promise<{
   session: { id: string; opened_at: string | null; status: string };
   client: { id: string; name: string; email: string | null };
   uploads: InboxUploadRow[];
@@ -328,69 +266,68 @@ export async function listPendingUploadsForSession(
     .eq("user_id", user.id)
     .eq("submission_session_id", sessionId)
     .eq("status", "PENDING")
-    .is("deleted_at", null)
     .order("uploaded_at", { ascending: false });
 
   if (error) throw error;
 
   return {
-    session: { id: String(s.id), opened_at: s.opened_at ?? null, status: s.status },
+    session: { id: s.id, opened_at: s.opened_at ?? null, status: s.status },
     client: {
-      id: String(s.client.id),
+      id: s.client.id,
       name: s.client.name ?? "(unnamed)",
       email: s.client.email ?? null,
     },
-    uploads: (uploads ?? []) as InboxUploadRow[],
+    uploads: (uploads ?? []) as unknown as InboxUploadRow[],
   };
 }
 
-/**
- * Finds the newest session id for a client.
- * Used by `/inbox/client/[clientId]` redirector.
- */
-export async function getLatestSessionIdForClient(clientId: string): Promise<string | null> {
-  assertUuid("clientId", clientId);
+export async function createSignedDownloadUrl(uploadId: string): Promise<{
+  url: string;
+  mime_type: string | null;
+  original_filename: string;
+}> {
+  assertUuid("uploadId", uploadId);
 
   const { supabase, user } = await requireUser();
 
-  const { data: sess, error: sErr } = await supabase
-    .from("submission_sessions")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("client_id", clientId)
-    .order("opened_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (sErr) throw sErr;
-  if (sess?.id) return String(sess.id);
-
-  // Fallback: newest upload with a session id
-  const { data: up, error: uErr } = await supabase
+  const { data, error } = await supabase
     .from("uploads")
-    .select("submission_session_id")
+    .select("id,storage_key,mime_type,original_filename")
+    .eq("id", uploadId)
     .eq("user_id", user.id)
-    .eq("client_id", clientId)
-    .not("submission_session_id", "is", null)
-    .order("uploaded_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .single();
 
-  if (uErr) throw uErr;
-  return up?.submission_session_id ? String(up.submission_session_id) : null;
+  if (error) throw error;
+
+  const storageKey = String((data as { storage_key?: unknown })?.storage_key ?? "").trim();
+  if (!storageKey) throw new Error("Upload is missing storage_key");
+
+  // ✅ correct default bucket name
+  const bucket = process.env.NEXT_PUBLIC_UPLOADS_BUCKET ?? "client_uploads";
+
+  const { data: signed, error: signErr } = await supabase.storage
+    .from(bucket)
+    .createSignedUrl(storageKey, 60 * 10); // 10 min
+
+  if (signErr) throw signErr;
+  if (!signed?.signedUrl) throw new Error("Could not create signed URL");
+
+  return {
+    url: signed.signedUrl,
+    mime_type: (data as { mime_type?: string | null }).mime_type ?? null,
+    original_filename: String((data as { original_filename?: unknown }).original_filename ?? ""),
+  };
 }
 
 export async function listInboxClientsWithPendingCounts(): Promise<
   Array<{
-    client: { id: string; name: string | null; email: string | null };
     client_id: string;
     pending_total: number;
     pending_new: number;
+    client: { id: string; name: string | null; email: string | null } | null;
   }>
 > {
   const { supabase, user } = await requireUser();
-
-  type UploadLite = { client_id: string; viewed_at: string | null };
 
   const { data, error } = await supabase
     .from("uploads")
@@ -406,13 +343,19 @@ export async function listInboxClientsWithPendingCounts(): Promise<
     { client_id: string; pending_total: number; pending_new: number }
   >();
 
-  for (const row of (data ?? []) as UploadLite[]) {
-    const cid = String(row.client_id);
-    const viewed = row.viewed_at ?? null;
+  for (const row of data ?? []) {
+    const cid = String((row as { client_id?: unknown }).client_id ?? "");
+    if (!cid) continue;
 
-    const cur = byClient.get(cid) ?? { client_id: cid, pending_total: 0, pending_new: 0 };
+    const cur = byClient.get(cid) ?? {
+      client_id: cid,
+      pending_total: 0,
+      pending_new: 0,
+    };
+
     cur.pending_total += 1;
-    if (!viewed) cur.pending_new += 1;
+    if (!(row as { viewed_at?: unknown }).viewed_at) cur.pending_new += 1;
+
     byClient.set(cid, cur);
   }
 
@@ -427,21 +370,21 @@ export async function listInboxClientsWithPendingCounts(): Promise<
 
   if (cErr) throw cErr;
 
-  const clientMap = new Map((clients ?? []).map((c) => [String(c.id), c]));
+  const clientMap = new Map(
+    (clients ?? []).map((c) => [String((c as { id?: unknown }).id), c])
+  );
 
   return clientIds
-    .map((id) => {
-      const client = clientMap.get(id);
-      if (!client) return null;
-      return { client: client as { id: string; name: string | null; email: string | null }, ...byClient.get(id)! };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+    .map((id) => ({
+      client: (clientMap.get(id) ?? null) as
+        | { id: string; name: string | null; email: string | null }
+        | null,
+      ...byClient.get(id)!,
+    }))
+    .filter((x) => x.client);
 }
 
-export async function listPendingUploadsForClient(clientId: string): Promise<{
-  client: { id: string; name: string | null; email: string | null };
-  uploads: UploadRow[];
-}> {
+export async function listPendingUploadsForClient(clientId: string) {
   assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
@@ -458,7 +401,7 @@ export async function listPendingUploadsForClient(clientId: string): Promise<{
   const { data: uploads, error } = await supabase
     .from("uploads")
     .select(
-      "id,client_id,submission_session_id,document_request_id,original_filename,mime_type,size_bytes,status,denial_reason,uploaded_at,viewed_at,reviewed_at,storage_key,deleted_at"
+      "id,client_id,document_request_id,original_filename,mime_type,size_bytes,status,denial_reason,uploaded_at,viewed_at,reviewed_at,storage_key"
     )
     .eq("client_id", clientId)
     .eq("user_id", user.id)
@@ -468,7 +411,7 @@ export async function listPendingUploadsForClient(clientId: string): Promise<{
 
   if (error) throw error;
 
-  return { client: client as { id: string; name: string | null; email: string | null }, uploads: (uploads ?? []) as UploadRow[] };
+  return { client, uploads: uploads ?? [] };
 }
 
 export async function listClientIdsWithUnseenPendingUploads(): Promise<Set<string>> {
@@ -484,25 +427,7 @@ export async function listClientIdsWithUnseenPendingUploads(): Promise<Set<strin
 
   if (error) throw error;
 
-  type Row = { client_id: string };
-  return new Set(((data ?? []) as Row[]).map((r) => String(r.client_id)));
-}
-
-export async function getOpenSessionIdForClient(clientId: string): Promise<string | null> {
-  assertUuid("clientId", clientId);
-
-  const { supabase, user } = await requireUser();
-
-  const { data, error } = await supabase
-    .from("submission_sessions")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("client_id", clientId)
-    .eq("status", "OPEN")
-    .order("opened_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-  return data?.id ? String(data.id) : null;
+  return new Set(
+    (data ?? []).map((r) => String((r as { client_id?: unknown }).client_id ?? ""))
+  );
 }
