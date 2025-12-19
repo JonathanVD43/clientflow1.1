@@ -1,11 +1,12 @@
 "use server";
 
-import { redirect } from "next/navigation";
-import { reviewUpload } from "@/lib/db/uploads";
+import { acceptUploadAndRedirect, denyUploadAndRedirect } from "@/lib/actions/uploadReview";
 
 export async function acceptUploadAction(clientId: string, uploadId: string) {
-  await reviewUpload({ uploadId, status: "ACCEPTED" });
-  redirect(`/clients/${clientId}/uploads/${uploadId}?saved=accepted`);
+  await acceptUploadAndRedirect({
+    uploadId,
+    redirectTo: `/clients/${clientId}/uploads/${uploadId}`,
+  });
 }
 
 export async function denyUploadAction(
@@ -13,7 +14,9 @@ export async function denyUploadAction(
   uploadId: string,
   formData: FormData
 ) {
-  const denial_reason = String(formData.get("denial_reason") ?? "").trim();
-  await reviewUpload({ uploadId, status: "DENIED", denial_reason });
-  redirect(`/clients/${clientId}/uploads/${uploadId}?saved=denied`);
+  await denyUploadAndRedirect({
+    uploadId,
+    formData,
+    redirectTo: `/clients/${clientId}/uploads/${uploadId}`,
+  });
 }
