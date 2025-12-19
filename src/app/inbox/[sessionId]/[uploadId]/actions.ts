@@ -1,17 +1,16 @@
+// src/app/inbox/[sessionId]/[uploadId]/actions.ts
 "use server";
 
-import { redirectWithError, redirectWithSuccess } from "@/lib/navigation/redirects";
-import { reviewUpload } from "@/lib/db/uploads";
+import {
+  acceptUploadAndRedirect,
+  denyUploadAndRedirect,
+} from "@/lib/actions/uploadReview";
 
 export async function acceptUploadAction(sessionId: string, uploadId: string) {
-  try {
-    await reviewUpload({ uploadId, status: "ACCEPTED" });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Could not accept upload";
-    redirectWithError(`/inbox/${sessionId}/${uploadId}`, msg);
-  }
-
-  redirectWithSuccess(`/inbox/${sessionId}/${uploadId}`, "accepted");
+  return acceptUploadAndRedirect({
+    uploadId,
+    redirectTo: `/inbox/${sessionId}/${uploadId}`,
+  });
 }
 
 export async function denyUploadAction(
@@ -19,13 +18,9 @@ export async function denyUploadAction(
   uploadId: string,
   formData: FormData
 ) {
-  try {
-    const denial_reason = String(formData.get("denial_reason") ?? "").trim();
-    await reviewUpload({ uploadId, status: "DENIED", denial_reason });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Could not deny upload";
-    redirectWithError(`/inbox/${sessionId}/${uploadId}`, msg);
-  }
-
-  redirectWithSuccess(`/inbox/${sessionId}/${uploadId}`, "denied");
+  return denyUploadAndRedirect({
+    uploadId,
+    formData,
+    redirectTo: `/inbox/${sessionId}/${uploadId}`,
+  });
 }

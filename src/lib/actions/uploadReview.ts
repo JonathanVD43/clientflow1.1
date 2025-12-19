@@ -1,20 +1,29 @@
 // src/lib/actions/uploadReview.ts
 "use server";
 
-import { redirect } from "next/navigation";
 import { reviewUpload } from "@/lib/db/uploads";
 import { requireString } from "@/lib/forms/fields";
+import { redirectWithError, redirectWithSuccess } from "@/lib/navigation/redirects";
+
+function errorMessage(e: unknown, fallback: string) {
+  return e instanceof Error ? e.message : fallback;
+}
 
 /**
  * Always redirect (never return) — keeps behavior consistent with server actions.
- * Pass a full redirect URL (including any querystring you want to preserve).
+ * redirectTo should be a PATH (e.g. `/inbox/${sessionId}/${uploadId}`), optionally with querystring.
  */
 export async function acceptUploadAndRedirect(args: {
   uploadId: string;
   redirectTo: string;
 }) {
-  await reviewUpload({ uploadId: args.uploadId, status: "ACCEPTED" });
-  redirect(withSaved(args.redirectTo, "accepted"));
+  try {
+    await reviewUpload({ uploadId: args.uploadId, status: "ACCEPTED" });
+  } catch (e) {
+    redirectWithError(args.redirectTo, errorMessage(e, "Could not accept upload"));
+  }
+
+  redirectWithSuccess(args.redirectTo, "accepted");
 }
 
 export async function denyUploadAndRedirect(args: {
@@ -22,24 +31,21 @@ export async function denyUploadAndRedirect(args: {
   formData: FormData;
   redirectTo: string;
 }) {
-  const denial_reason = requireString(
-    args.formData,
-    "denial_reason",
-    "Denial reason is required"
-  );
+  try {
+    const denial_reason = requireString(
+      args.formData,
+      "denial_reason",
+      "Denial reason is required"
+    );
 
-  await reviewUpload({
-    uploadId: args.uploadId,
-    status: "DENIED",
-    denial_reason,
-  });
+    await reviewUpload({
+      uploadId: args.uploadId,
+      status: "DENIED",
+      denial_reason,
+    });
+  } catch (e) {
+    redirectWithError(args.redirectTo, errorMessage(e, "Could not deny upload"));
+  }
 
-  redirect(withSaved(args.redirectTo, "denied"));
-}
-
-/** Adds/overwrites saved=... while preserving existing query params */
-function withSaved(url: string, value: string) {
-  const u = new URL(url, "http://local"); // base required for URL parsing
-  u.searchParams.set("saved", value);
-  return u.pathname + (u.search ? u.search : "");
+  redirectWithSuccess(args.redirectTo, "denied");
 }
