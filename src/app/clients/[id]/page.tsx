@@ -33,12 +33,20 @@ const TIMEZONE_OPTIONS = [
   "Australia/Sydney",
 ] as const;
 
+// ✅ Must match the ?saved=... values you redirect with in server actions
 const SAVED_MESSAGES: Record<string, string> = {
-  due: "Due settings successfully saved",
+  // clients/new/actions.ts
+  created: "Client successfully created",
+
+  // clients/[id]/actions.ts
   client: "Client successfully updated",
-  "doc-added": "Document successfully added",
-  "doc-updated": "Document successfully updated",
-  "doc-deleted": "Document successfully deleted",
+  due: "Due settings successfully saved",
+  deleted: "Client successfully deleted",
+
+  // clients/[id]/documents.actions.ts
+  doc_added: "Document successfully added",
+  doc_updated: "Document successfully updated",
+  doc_deleted: "Document successfully deleted",
 };
 
 export default async function ClientDetailPage({
@@ -50,8 +58,13 @@ export default async function ClientDetailPage({
 }) {
   const { id } = await params;
   const sp = (await searchParams) ?? {};
-  const dueError = sp.dueError ? decodeURIComponent(sp.dueError) : null;
-  const saved = sp.saved ?? null;
+
+  const dueError =
+    typeof sp.dueError === "string" && sp.dueError.trim()
+      ? decodeURIComponent(sp.dueError)
+      : null;
+
+  const saved = typeof sp.saved === "string" ? sp.saved : null;
 
   if (!UUID_RE.test(id)) {
     return (
@@ -74,7 +87,7 @@ export default async function ClientDetailPage({
   const currentTz = (client.due_timezone ?? "Africa/Johannesburg").trim();
   const isKnownTz = (TIMEZONE_OPTIONS as readonly string[]).includes(currentTz);
 
-  const successMessage = saved ? SAVED_MESSAGES[saved] : null;
+  const successMessage = saved ? SAVED_MESSAGES[saved] ?? null : null;
 
   return (
     <main className="p-6 max-w-2xl space-y-6">
@@ -214,7 +227,11 @@ export default async function ClientDetailPage({
             {docs.map((d) => (
               <li key={d.id} className="border rounded-xl p-3 space-y-2">
                 <form
-                  action={updateDocumentRequestAction.bind(null, client.id, d.id)}
+                  action={updateDocumentRequestAction.bind(
+                    null,
+                    client.id,
+                    d.id
+                  )}
                   className="space-y-2"
                 >
                   <div className="space-y-1">
@@ -269,7 +286,11 @@ export default async function ClientDetailPage({
 
                 {/* Delete */}
                 <form
-                  action={deleteDocumentRequestAction.bind(null, client.id, d.id)}
+                  action={deleteDocumentRequestAction.bind(
+                    null,
+                    client.id,
+                    d.id
+                  )}
                 >
                   <button className="text-sm underline text-red-600">
                     Delete document

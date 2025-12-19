@@ -1,8 +1,8 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { updateClient, deleteClient } from "@/lib/db/clients";
 import { extractClientUpdate, extractDueSettings } from "@/lib/forms/validators";
+import { redirectWithError, redirectWithSuccess } from "@/lib/navigation/redirects";
 
 export async function updateClientAction(clientId: string, formData: FormData) {
   const patch = extractClientUpdate(formData);
@@ -16,7 +16,7 @@ export async function updateClientAction(clientId: string, formData: FormData) {
     notify_by_email: patch.notify_by_email,
   });
 
-  redirect(`/clients/${clientId}?saved=client`);
+  redirectWithSuccess(`/clients/${clientId}`, "client");
 }
 
 export async function updateClientDueSettingsAction(
@@ -25,17 +25,16 @@ export async function updateClientDueSettingsAction(
 ) {
   try {
     const { due_day_of_month, due_timezone } = extractDueSettings(formData);
-
     await updateClient(clientId, { due_day_of_month, due_timezone });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not save due settings";
-    redirect(`/clients/${clientId}?dueError=${encodeURIComponent(msg)}`);
+    redirectWithError(`/clients/${clientId}`, msg);
   }
 
-  redirect(`/clients/${clientId}?saved=due`);
+  redirectWithSuccess(`/clients/${clientId}`, "due");
 }
 
 export async function deleteClientAction(clientId: string) {
   await deleteClient(clientId);
-  redirect("/clients?saved=deleted");
+  redirectWithSuccess("/clients", "deleted");
 }

@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import {
   createDocumentRequest,
   updateDocumentRequest,
@@ -10,6 +9,7 @@ import {
   extractDocumentRequestCreate,
   extractDocumentRequestUpdate,
 } from "@/lib/forms/validators";
+import { redirectWithSuccess } from "@/lib/navigation/redirects";
 
 export async function addDocumentRequestAction(
   clientId: string,
@@ -23,7 +23,7 @@ export async function addDocumentRequestAction(
     description,
   });
 
-  redirect(`/clients/${clientId}?saved=doc_added`);
+  redirectWithSuccess(`/clients/${clientId}`, "doc_added");
 }
 
 export async function updateDocumentRequestAction(
@@ -42,10 +42,13 @@ export async function updateDocumentRequestAction(
     active,
   });
 
-  redirect(`/clients/${clientId}?saved=doc_updated`);
+  redirectWithSuccess(`/clients/${clientId}`, "doc_updated");
 }
 
-export async function deleteDocumentRequestAction(clientId: string, docId: string) {
+export async function deleteDocumentRequestAction(
+  clientId: string,
+  docId: string
+) {
   await deleteDocumentRequest(docId);
-  redirect(`/clients/${clientId}?saved=doc_deleted`);
+  redirectWithSuccess(`/clients/${clientId}`, "doc_deleted");
 }
