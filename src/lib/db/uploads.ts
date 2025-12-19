@@ -21,7 +21,9 @@ export type UploadRow = {
   deleted_at?: string | null;
 };
 
-export async function listUploadsForClient(clientId: string): Promise<UploadRow[]> {
+export async function listUploadsForClient(
+  clientId: string
+): Promise<UploadRow[]> {
   assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
@@ -58,7 +60,9 @@ export async function getUpload(uploadId: string): Promise<UploadRow> {
   return data as unknown as UploadRow;
 }
 
-export async function markUploadViewed(uploadId: string): Promise<{ id: string }> {
+export async function markUploadViewed(
+  uploadId: string
+): Promise<{ id: string }> {
   assertUuid("uploadId", uploadId);
 
   const { supabase, user } = await requireUser();
@@ -86,17 +90,34 @@ export async function reviewUpload(input: {
 
   const { supabase, user } = await requireUser();
 
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+
+  // Retention policy:
+  // - DENIED: eligible for cleanup immediately (delete_after_at = now)
+  // - ACCEPTED: keep for 7 days
+  const ACCEPTED_TTL_DAYS = 7;
+  const acceptedDeleteAfterIso = new Date(
+    now + ACCEPTED_TTL_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+
   const patch: Record<string, unknown> = {
     status: input.status,
-    reviewed_at: new Date().toISOString(),
+    reviewed_at: nowIso,
   };
 
   if (input.status === "DENIED") {
     const reason = String(input.denial_reason ?? "").trim();
     if (!reason) throw new Error("Denial reason is required");
     patch.denial_reason = reason;
+
+    // mark for deletion ASAP; cleanup job will remove from storage + set deleted_at
+    patch.delete_after_at = nowIso;
   } else {
     patch.denial_reason = null;
+
+    // accepted files hang around for a week
+    patch.delete_after_at = acceptedDeleteAfterIso;
   }
 
   return expectSingleId(
@@ -261,7 +282,9 @@ export async function listPendingUploadsForSession(sessionId: string): Promise<{
 
   const { data: uploads, error } = await supabase
     .from("uploads")
-    .select("id,original_filename,uploaded_at,viewed_at,mime_type,size_bytes,document_request_id")
+    .select(
+      "id,original_filename,uploaded_at,viewed_at,mime_type,size_bytes,document_request_id"
+    )
     .eq("user_id", user.id)
     .eq("submission_session_id", sessionId)
     .eq("status", "PENDING")
@@ -291,9 +314,10 @@ export async function createSignedDownloadUrl(uploadId: string): Promise<{
 
   const { data, error } = await supabase
     .from("uploads")
-    .select("id,storage_key,mime_type,original_filename")
+    .select("id,storage_key,mime_type,original_filename,delete_after_at")
     .eq("id", uploadId)
     .eq("user_id", user.id)
+    .is("deleted_at", null)
     .single();
 
   if (error) throw error;
@@ -303,7 +327,6 @@ export async function createSignedDownloadUrl(uploadId: string): Promise<{
   ).trim();
   if (!storageKey) throw new Error("Upload is missing storage_key");
 
-  // ✅ correct default bucket name
   const bucket = process.env.NEXT_PUBLIC_UPLOADS_BUCKET ?? "client_uploads";
 
   const { data: signed, error: signErr } = await supabase.storage
@@ -312,6 +335,32 @@ export async function createSignedDownloadUrl(uploadId: string): Promise<{
 
   if (signErr) throw signErr;
   if (!signed?.signedUrl) throw new Error("Could not create signed URL");
+
+  // Policy: once downloaded, shorten retention to 72 hours (but don't extend it)
+  try {
+    const now = Date.now();
+    const seventyTwoHours = now + 72 * 60 * 60 * 1000;
+
+    const existing = (data as { delete_after_at?: string | null })
+      .delete_after_at;
+    const existingMs = existing ? Date.parse(existing) : NaN;
+
+    const newDeleteAfterMs =
+      Number.isFinite(existingMs) && existingMs > 0
+        ? Math.min(existingMs, seventyTwoHours)
+        : seventyTwoHours;
+
+    await supabase
+      .from("uploads")
+      .update({
+        downloaded_at: new Date(now).toISOString(),
+        delete_after_at: new Date(newDeleteAfterMs).toISOString(),
+      })
+      .eq("id", uploadId)
+      .eq("user_id", user.id);
+  } catch {
+    // Best-effort: download link should still work even if retention update fails.
+  }
 
   return {
     url: signed.signedUrl,
@@ -417,7 +466,9 @@ export async function listPendingUploadsForClient(clientId: string) {
   return { client, uploads: uploads ?? [] };
 }
 
-export async function listClientIdsWithUnseenPendingUploads(): Promise<Set<string>> {
+export async function listClientIdsWithUnseenPendingUploads(): Promise<
+  Set<string>
+> {
   const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase

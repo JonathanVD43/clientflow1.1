@@ -1,3 +1,4 @@
+// src/app/api/portal/[token]/uploads/create/route.ts
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { isValidUuid } from "@/lib/validation/uuid";
 import {
@@ -5,6 +6,7 @@ import {
   successResponse,
   validateJsonBody,
 } from "@/lib/api/responses";
+import { validateCSRF } from "@/lib/security/csrf";
 
 type Body = {
   filename: string;
@@ -33,6 +35,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ token: string }> }
 ) {
+  const csrfOk = await validateCSRF();
+  if (!csrfOk) return errorResponse("Invalid origin", 403);
+
   const { token } = await ctx.params;
   const cleanToken = (token ?? "").trim();
   if (!cleanToken) return errorResponse("Missing token", 400);
@@ -66,7 +71,8 @@ export async function POST(
 
   if (clientErr) return errorResponse(clientErr.message, 500);
   if (!client) return errorResponse("Invalid token", 404);
-  if (!client.active || !client.portal_enabled) return errorResponse("Portal disabled", 403);
+  if (!client.active || !client.portal_enabled)
+    return errorResponse("Portal disabled", 403);
 
   // 2) Validate doc request belongs to this client (if provided) + fetch max_files
   let maxFiles = 1;
@@ -81,7 +87,8 @@ export async function POST(
       .maybeSingle();
 
     if (drErr) return errorResponse(drErr.message, 500);
-    if (!dr || dr.active !== true) return errorResponse("Invalid document request", 400);
+    if (!dr || dr.active !== true)
+      return errorResponse("Invalid document request", 400);
 
     maxFiles = Math.max(1, Number(dr.max_files ?? 1));
   }
@@ -100,7 +107,10 @@ export async function POST(
     if (countErr) return errorResponse(countErr.message, 500);
 
     if ((count ?? 0) >= maxFiles) {
-      return errorResponse(`Max files reached for this document (max ${maxFiles}).`, 409);
+      return errorResponse(
+        `Max files reached for this document (max ${maxFiles}).`,
+        409
+      );
     }
   }
 
@@ -155,7 +165,8 @@ export async function POST(
     }
   }
 
-  if (!sessionId) return errorResponse("Could not resolve submission session", 500);
+  if (!sessionId)
+    return errorResponse("Could not resolve submission session", 500);
 
   // 5) Create upload row ONCE (avoid storage_key null constraint)
   const uploadId =
@@ -165,6 +176,12 @@ export async function POST(
 
   const safeName = safeFilename(filename);
   const storage_key = `clients/${client.id}/${uploadId}/${safeName}`;
+
+  // Pending uploads expire after 30 days if never accepted/denied.
+  const PENDING_TTL_DAYS = 30;
+  const delete_after_at = new Date(
+    Date.now() + PENDING_TTL_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
 
   const { error: insErr } = await supabase.from("uploads").insert({
     id: uploadId,
@@ -177,6 +194,7 @@ export async function POST(
     mime_type,
     size_bytes,
     status: "PENDING",
+    delete_after_at,
   });
 
   if (insErr) return errorResponse(insErr.message, 500);
@@ -189,7 +207,10 @@ export async function POST(
     .createSignedUploadUrl(storage_key);
 
   if (signErr || !signed?.token) {
-    return errorResponse(signErr?.message ?? "Could not create signed upload url", 500);
+    return errorResponse(
+      signErr?.message ?? "Could not create signed upload url",
+      500
+    );
   }
 
   return successResponse({
