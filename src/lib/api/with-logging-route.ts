@@ -1,12 +1,15 @@
-// src/lib/api/with-logging.ts
+// src/lib/api/with-logging-route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import type { Logger } from "pino";
 import * as Sentry from "@sentry/nextjs";
 import { getRequestContext } from "@/lib/request-context";
 import { writeAuditEvent } from "@/lib/audit";
 
-type HandlerCtx = { reqId: string; log: Logger };
-type Handler = (req: NextRequest, ctx: HandlerCtx) => Promise<Response>;
+export type LoggingCtx = { reqId: string; log: Logger };
+
+function getIp(req: NextRequest) {
+  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? undefined;
+}
 
 function errorToLogObject(err: unknown) {
   if (err instanceof Error) {
@@ -15,19 +18,20 @@ function errorToLogObject(err: unknown) {
   return { message: String(err) };
 }
 
-function getIp(req: NextRequest) {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? undefined;
-}
-
-export function withLogging(handler: Handler) {
-  return async function wrapped(req: NextRequest): Promise<Response> {
+/**
+ * Like withLogging(), but supports Next.js route context (params).
+ */
+export function withLoggingRoute<RouteCtx>(
+  handler: (req: NextRequest, routeCtx: RouteCtx, ctx: LoggingCtx) => Promise<Response>
+) {
+  return async function wrapped(req: NextRequest, routeCtx: RouteCtx): Promise<Response> {
     const { reqId, log } = getRequestContext(req);
     const start = Date.now();
 
     log.info({ event: "request.start" }, "request start");
 
     try {
-      const res = await handler(req, { reqId, log });
+      const res = await handler(req, routeCtx, { reqId, log });
       const durationMs = Date.now() - start;
 
       if (res instanceof NextResponse) {
@@ -48,23 +52,17 @@ export function withLogging(handler: Handler) {
     } catch (err: unknown) {
       const durationMs = Date.now() - start;
 
-      // 1) Sentry (grouped errors + stack traces)
       Sentry.withScope((scope) => {
         scope.setTag("reqId", reqId);
-        scope.setContext("request", {
-          method: req.method,
-          path: req.nextUrl.pathname,
-        });
+        scope.setContext("request", { method: req.method, path: req.nextUrl.pathname });
         Sentry.captureException(err);
       });
 
-      // 2) Pino log
       log.error(
         { event: "request.error", durationMs, err: errorToLogObject(err) },
         "request failed"
       );
 
-      // 3) Audit (do NOT throw if it fails)
       await writeAuditEvent({
         requestId: reqId,
         eventType: "api.error",

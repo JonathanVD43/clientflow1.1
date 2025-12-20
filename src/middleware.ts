@@ -48,6 +48,7 @@ async function applyRateLimiting(req: NextRequest) {
     rl = uploadRatelimit;
   } else if (
     pathname.startsWith("/api/public/client") ||
+    pathname.startsWith("/api/portal/") ||
     pathname.includes("/token") ||
     pathname.includes("/validate")
   ) {
@@ -70,11 +71,21 @@ async function applyRateLimiting(req: NextRequest) {
       },
       { status: 429 }
     );
-    return withRateLimitHeaders(res, result.limit, result.remaining, result.reset);
+    return withRateLimitHeaders(
+      res,
+      result.limit,
+      result.remaining,
+      result.reset
+    );
   }
 
   const res = NextResponse.next();
-  return withRateLimitHeaders(res, result.limit, result.remaining, result.reset);
+  return withRateLimitHeaders(
+    res,
+    result.limit,
+    result.remaining,
+    result.reset
+  );
 }
 
 export async function middleware(req: NextRequest) {
