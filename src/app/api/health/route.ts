@@ -1,6 +1,7 @@
-// src/app/api/health/route.ts
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { withLogging } from "@/lib/api/with-logging";
 
-export async function GET() {
-  return NextResponse.json({ ok: true, ts: Date.now() });
-}
+export const GET = withLogging(async function GET(_req: NextRequest, { log, reqId }) {
+  log.info({ event: "health.check" }, "health check ok");
+  return NextResponse.json({ ok: true, reqId, ts: Date.now() });
+});
