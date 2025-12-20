@@ -487,3 +487,28 @@ export async function listClientIdsWithUnseenPendingUploads(): Promise<
     )
   );
 }
+
+/**
+ * Used by /inbox/client/[clientId] to jump to the user's current OPEN session for that client.
+ * Returns null if none exists.
+ */
+export async function getOpenSessionIdForClient(
+  clientId: string
+): Promise<string | null> {
+  assertUuid("clientId", clientId);
+
+  const { supabase, user } = await requireUser();
+
+  const { data, error } = await supabase
+    .from("submission_sessions")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("client_id", clientId)
+    .eq("status", "OPEN")
+    .order("opened_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data?.id ? String((data as { id?: unknown }).id) : null;
+}
