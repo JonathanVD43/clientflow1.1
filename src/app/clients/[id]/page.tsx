@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getClient } from "@/lib/db/clients";
 import { listDocumentRequests } from "@/lib/db/documentRequests";
+import CopyLink from "./CopyLink";
 import {
   updateClientAction,
   deleteClientAction,
@@ -12,6 +13,8 @@ import {
   updateDocumentRequestAction,
   deleteDocumentRequestAction,
 } from "./documents.actions";
+
+import { createRequestLinkAction } from "./request-link.actions";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,17 +36,11 @@ const TIMEZONE_OPTIONS = [
   "Australia/Sydney",
 ] as const;
 
-// ✅ Must match the ?saved=... values you redirect with in server actions
 const SAVED_MESSAGES: Record<string, string> = {
-  // clients/new/actions.ts
   created: "Client successfully created",
-
-  // clients/[id]/actions.ts
   client: "Client successfully updated",
   due: "Due settings successfully saved",
   deleted: "Client successfully deleted",
-
-  // clients/[id]/documents.actions.ts
   doc_added: "Document successfully added",
   doc_updated: "Document successfully updated",
   doc_deleted: "Document successfully deleted",
@@ -54,7 +51,12 @@ export default async function ClientDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ dueError?: string; saved?: string }>;
+  searchParams?: Promise<{
+    dueError?: string;
+    saved?: string;
+    requestToken?: string;
+    requestError?: string;
+  }>;
 }) {
   const { id } = await params;
   const sp = (await searchParams) ?? {};
@@ -65,6 +67,16 @@ export default async function ClientDetailPage({
       : null;
 
   const saved = typeof sp.saved === "string" ? sp.saved : null;
+
+  const requestToken =
+    typeof sp.requestToken === "string" && sp.requestToken.trim()
+      ? decodeURIComponent(sp.requestToken)
+      : null;
+
+  const requestError =
+    typeof sp.requestError === "string" && sp.requestError.trim()
+      ? decodeURIComponent(sp.requestError)
+      : null;
 
   if (!UUID_RE.test(id)) {
     return (
@@ -89,6 +101,18 @@ export default async function ClientDetailPage({
 
   const successMessage = saved ? SAVED_MESSAGES[saved] ?? null : null;
 
+  const origin = (
+    process.env.NEXT_PUBLIC_APP_ORIGIN?.trim() ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    ""
+  ).replace(/\/+$/, "");
+
+  const requestLink = requestToken
+    ? origin
+      ? `${origin}/portal/${requestToken}`
+      : `/portal/${requestToken}`
+    : null;
+
   return (
     <main className="p-6 max-w-2xl space-y-6">
       {/* Header */}
@@ -98,14 +122,27 @@ export default async function ClientDetailPage({
         <div className="text-sm opacity-70 space-y-1">
           {client.email ? <div>Email: {client.email}</div> : null}
           {client.phone_number ? <div>Phone: {client.phone_number}</div> : null}
+
           <div>
-            Public token:{" "}
+            Legacy client token (v1):{" "}
             <span className="font-mono break-all">{client.public_token}</span>
+          </div>
+
+          <div className="flex gap-3 text-sm pt-1">
+            <Link className="underline" href="/clients">
+              Clients
+            </Link>
+            <Link className="underline" href="/inbox">
+              Inbox
+            </Link>
+            <Link className="underline" href={`/clients/${client.id}/uploads`}>
+              Uploads
+            </Link>
           </div>
         </div>
       </div>
 
-      {/* ✅ Global success banner (works for ALL forms) */}
+      {/* Global success banner */}
       {successMessage ? (
         <div className="border border-green-300 bg-green-50 text-green-800 rounded-lg p-3 text-sm">
           {successMessage} ✅
@@ -116,7 +153,6 @@ export default async function ClientDetailPage({
       <section className="space-y-3 border rounded-xl p-4">
         <h2 className="text-lg font-semibold">Due settings</h2>
 
-        {/* Keep due errors here (specific to this section) */}
         {dueError ? (
           <div className="border border-red-300 bg-red-50 text-red-700 rounded-lg p-3 text-sm">
             {dueError}
@@ -189,7 +225,6 @@ export default async function ClientDetailPage({
           </div>
         </div>
 
-        {/* Add new doc */}
         <form
           action={addDocumentRequestAction.bind(null, client.id)}
           className="space-y-3"
@@ -219,7 +254,6 @@ export default async function ClientDetailPage({
 
         <div className="border-t pt-4" />
 
-        {/* Existing docs */}
         {docs.length === 0 ? (
           <div className="opacity-70 text-sm">No documents set yet.</div>
         ) : (
@@ -284,13 +318,8 @@ export default async function ClientDetailPage({
                   </div>
                 </form>
 
-                {/* Delete */}
                 <form
-                  action={deleteDocumentRequestAction.bind(
-                    null,
-                    client.id,
-                    d.id
-                  )}
+                  action={deleteDocumentRequestAction.bind(null, client.id, d.id)}
                 >
                   <button className="text-sm underline text-red-600">
                     Delete document
@@ -300,6 +329,89 @@ export default async function ClientDetailPage({
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Request documents */}
+      <section className="space-y-4 border rounded-xl p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Request documents</h2>
+          <div className="text-sm opacity-70">
+            Creates a one-time upload link
+          </div>
+        </div>
+
+        {requestError ? (
+          <div className="border border-red-300 bg-red-50 text-red-700 rounded-lg p-3 text-sm">
+            {requestError}
+          </div>
+        ) : null}
+
+        {requestLink ? (
+          <div className="border rounded-xl p-3 space-y-2">
+            <div className="text-sm font-medium">Request link created ✅</div>
+            <div className="text-xs opacity-60">
+              Copy and send this link to your client. It will stop working once
+              all requested documents are submitted.
+            </div>
+
+            <CopyLink value={requestLink} />
+          </div>
+        ) : null}
+
+        <form
+          action={createRequestLinkAction.bind(null, client.id)}
+          className="space-y-3"
+        >
+          {docs.filter((d) => d.active).length === 0 ? (
+            <div className="text-sm opacity-70">
+              No active document requests. Add documents above first.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="text-sm opacity-70">
+                Select which documents to request:
+              </div>
+
+              <ul className="space-y-2">
+                {docs
+                  .filter((d) => d.active)
+                  .map((d) => (
+                    <li key={d.id} className="border rounded-lg p-3">
+                      <label className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          name="document_request_id"
+                          value={d.id}
+                          defaultChecked={!!d.required}
+                          className="mt-1"
+                        />
+                        <span className="min-w-0">
+                          <div className="font-medium truncate">{d.title}</div>
+                          {d.description ? (
+                            <div className="text-xs opacity-70">
+                              {d.description}
+                            </div>
+                          ) : null}
+                          <div className="text-xs opacity-60">
+                            {d.required ? "Required" : "Optional"}
+                          </div>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
+          <button className="border rounded-lg px-4 py-2">
+            Create request link
+          </button>
+        </form>
+
+        <div className="text-xs opacity-60">
+          Tip: If some files are denied later, you’ll be able to generate a new
+          link for only the denied items.
+        </div>
       </section>
 
       {/* Edit client */}

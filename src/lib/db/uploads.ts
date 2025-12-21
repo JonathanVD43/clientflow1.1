@@ -21,6 +21,10 @@ export type UploadRow = {
   deleted_at?: string | null;
 };
 
+function daysFromNowIso(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 export async function listUploadsForClient(
   clientId: string
 ): Promise<UploadRow[]> {
@@ -94,11 +98,18 @@ export async function reviewUpload(input: {
   const nowIso = new Date(now).toISOString();
 
   // Retention policy:
-  // - DENIED: eligible for cleanup immediately (delete_after_at = now)
-  // - ACCEPTED: keep for 7 days
+  // - PENDING (set elsewhere): 30 days from upload create
+  // - ACCEPTED: 7 days from acceptance
+  // - DENIED: keep metadata for 30 days to support follow-up + re-request UX
   const ACCEPTED_TTL_DAYS = 7;
+  const DENIED_TTL_DAYS = 30;
+
   const acceptedDeleteAfterIso = new Date(
     now + ACCEPTED_TTL_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const deniedDeleteAfterIso = new Date(
+    now + DENIED_TTL_DAYS * 24 * 60 * 60 * 1000
   ).toISOString();
 
   const patch: Record<string, unknown> = {
@@ -111,8 +122,8 @@ export async function reviewUpload(input: {
     if (!reason) throw new Error("Denial reason is required");
     patch.denial_reason = reason;
 
-    // mark for deletion ASAP; cleanup job will remove from storage + set deleted_at
-    patch.delete_after_at = nowIso;
+    // ✅ Keep metadata around long enough for end-of-review + email drafting.
+    patch.delete_after_at = deniedDeleteAfterIso;
   } else {
     patch.denial_reason = null;
 
@@ -131,6 +142,7 @@ export async function reviewUpload(input: {
     "Review update failed"
   );
 }
+
 
 /* =========================
    Inbox (session-grouped)
