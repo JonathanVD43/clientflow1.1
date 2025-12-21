@@ -1,29 +1,35 @@
 import { withSentryConfig } from "@sentry/nextjs";
-// next.config.ts
 import type { NextConfig } from "next";
 
 const isProd = process.env.NODE_ENV === "production";
 
 /**
- * A conservative CSP that generally works for Next.js without breaking dev.
- * In production we keep it on but avoid nonces for now (we can add nonces later).
+ * CSP:
+ * - Allow blob: workers (Chrome PDF viewer)
+ * - Allow frames (iframe previews)
+ * - Allow child-src as a fallback (older browsers)
  *
- * NOTE: If you use any third-party scripts (analytics, chat widgets), you’ll need to extend this.
+ * NOTE: We apply this CSP to PAGES, not API routes.
  */
 function buildCsp() {
   const directives = [
     "default-src 'self'",
 
-    // Next.js may need inline styles (styled-jsx) and/or style tags from libs.
+    // styles
     "style-src 'self' 'unsafe-inline'",
 
-    // Scripts: dev needs eval for HMR; blob: is needed for some libs that create blob-based workers.
+    // scripts
+    // dev needs eval for HMR; blob: helps some browser PDF flows / worker bootstraps
     isProd
       ? "script-src 'self' 'unsafe-inline' blob:"
       : "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
 
-    // ✅ Allow blob workers (pdf.js and similar)
+    // ✅ PDF viewer / pdf.js-like behavior
     "worker-src 'self' blob:",
+
+    // ✅ allow iframe previews
+    "frame-src 'self' blob:",
+    "child-src 'self' blob:",
 
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
@@ -32,6 +38,8 @@ function buildCsp() {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
+
+    // prevent clickjacking
     "frame-ancestors 'none'",
 
     ...(isProd ? ["upgrade-insecure-requests"] : []),
@@ -40,9 +48,12 @@ function buildCsp() {
   return directives.join("; ");
 }
 
-const securityHeaders = [
-  // HSTS: only set in production (requires HTTPS).
-  // 2 years + include subdomains + preload is a strong stance. If you’re unsure, drop preload for now.
+/**
+ * Headers for PAGES (strict).
+ * We do NOT apply these to /api/* because streaming responses + strict CORP/CSP
+ * can cause confusing browser blocks (especially inside iframes).
+ */
+const pageSecurityHeaders = [
   ...(isProd
     ? [
         {
@@ -52,18 +63,10 @@ const securityHeaders = [
       ]
     : []),
 
-  // Prevent MIME sniffing
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-DNS-Prefetch-Control", value: "off" },
-
-  // Clickjacking protection is handled by CSP frame-ancestors.
-  // If you prefer X-Frame-Options anyway, use SAMEORIGIN (but it’s less flexible than CSP).
-  // { key: "X-Frame-Options", value: "DENY" },
-
-  // Reduce referrer leakage
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
 
-  // Basic permissions lockdown (tweak as needed)
   {
     key: "Permissions-Policy",
     value: [
@@ -76,60 +79,51 @@ const securityHeaders = [
     ].join(", "),
   },
 
-  // Helps avoid some cross-origin leakage
+  // These are fine for pages
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Cross-Origin-Resource-Policy", value: "same-site" },
 
-  // CSP (we’ll apply to all routes)
   { key: "Content-Security-Policy", value: buildCsp() },
+];
+
+/**
+ * Headers for API routes (relaxed).
+ * Key idea: don’t let CORP/CSP interfere with streaming / iframe loading.
+ */
+const apiHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-DNS-Prefetch-Control", value: "off" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+
+  // ✅ This is the big one: allow API resources to be embedded/consumed
+  { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
 ];
 
 const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Apply to everything (pages + API)
-        source: "/:path*",
-        headers: securityHeaders,
+        // ✅ Apply strict headers ONLY to non-API routes
+        source: "/((?!api).*)",
+        headers: pageSecurityHeaders,
+      },
+      {
+        // ✅ Apply relaxed headers to API routes
+        source: "/api/:path*",
+        headers: apiHeaders,
       },
     ];
   },
 };
 
 export default withSentryConfig(nextConfig, {
-  // For all available options, see:
-  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
-
   org: "salus-software",
-
   project: "javascript-nextjs",
-
-  // Only print logs for uploading source maps in CI
   silent: !process.env.CI,
-
-  // For all available options, see:
-  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
-
-  // Upload a larger set of source maps for prettier stack traces (increases build time)
   widenClientFileUpload: true,
-
-  // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
   tunnelRoute: "/monitoring",
-
   webpack: {
-    // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
-    // See the following for more information:
-    // https://docs.sentry.io/product/crons/
-    // https://vercel.com/docs/cron-jobs
     automaticVercelMonitors: true,
-
-    // Tree-shaking options for reducing bundle size
-    treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
-      removeDebugLogging: true,
-    },
+    treeshake: { removeDebugLogging: true },
   },
 });

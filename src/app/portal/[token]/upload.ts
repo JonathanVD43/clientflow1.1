@@ -1,80 +1,115 @@
 // src/app/portal/[token]/upload.ts
 
-type CreateResponseOk = {
+type UploadCreateOk = {
   ok: true;
   upload: {
     id: string;
+    bucket: string;
     storage_key: string;
-    submission_session_id: string;
     document_request_id: string;
-    bucket?: string;
+    submission_session_id: string;
   };
-  signed: {
-    path: string;
-    token: string;
-  };
+  signedUrl: string;
 };
 
-type CreateResponseErr = { error: string };
-type CreateResponse = CreateResponseOk | CreateResponseErr;
+type UploadCreateErr = { error: string };
+type UploadCreateResponse = UploadCreateOk | UploadCreateErr;
 
-function isCreateOk(x: CreateResponse): x is CreateResponseOk {
-  return typeof x === "object" && x !== null && "ok" in x && (x as { ok?: unknown }).ok === true;
+function isErr(x: unknown): x is UploadCreateErr {
+  return (
+    typeof x === "object" &&
+    x !== null &&
+    "error" in x &&
+    typeof (x as { error?: unknown }).error === "string"
+  );
 }
 
-export async function uploadFile(token: string, file: File, documentRequestId: string) {
-  // 1) Ask API for signed upload URL + upload record
-  const res = await fetch(`/api/portal-session/${token}/uploads/create`, {
+async function safeJson(res: Response): Promise<unknown> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function errorFromJson(json: unknown, fallback: string) {
+  if (isErr(json) && json.error.trim()) return json.error.trim();
+  return fallback;
+}
+
+export async function uploadFile(
+  token: string,
+  file: File,
+  documentRequestId: string
+) {
+  // 1) Ask API for a signed upload URL (absolute)
+  const createRes = await fetch(`/api/portal-session/${token}/uploads/create`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       filename: file.name,
+      document_request_id: documentRequestId,
       mime_type: file.type || null,
       size_bytes: file.size,
-      document_request_id: documentRequestId,
     }),
   });
 
-  const json = (await res.json()) as CreateResponse;
+  const createJson = await safeJson(createRes);
 
-  if (!res.ok || !isCreateOk(json)) {
-    const message =
-      typeof (json as { error?: unknown }).error === "string"
-        ? String((json as { error: string }).error)
-        : `Upload init failed (${res.status})`;
-    throw new Error(message);
+  if (!createRes.ok) {
+    throw new Error(
+      errorFromJson(
+        createJson,
+        `Upload init failed (${createRes.status} ${createRes.statusText})`
+      )
+    );
   }
 
-  const uploadId = json.upload.id;
-  const bucket = json.upload.bucket ?? "client_uploads";
+  const payload = createJson as UploadCreateResponse;
 
-  // 2) Upload to Supabase Storage signed upload endpoint
-  // Supabase signed upload URL shape: /storage/v1/upload/resumable OR upload?token=...
-  // In your implementation you're returning { path, token } from createSignedUploadUrl.
-  const uploadUrl = `/storage/v1/object/${bucket}/${encodeURIComponent(json.signed.path)}?token=${encodeURIComponent(
-    json.signed.token
-  )}`;
+  if (isErr(payload)) throw new Error(payload.error);
+  if (!payload.ok) throw new Error("Upload init failed");
 
-  const put = await fetch(uploadUrl, {
+  if (typeof payload.signedUrl !== "string" || !payload.signedUrl.trim()) {
+    throw new Error("Upload init missing signedUrl");
+  }
+
+  const uploadId = payload.upload?.id;
+  if (!uploadId) throw new Error("Upload init missing upload.id");
+
+  // 2) PUT bytes to Supabase Storage using the absolute signed URL
+  const putRes = await fetch(payload.signedUrl, {
     method: "PUT",
     headers: {
       "content-type": file.type || "application/octet-stream",
-      "x-upsert": "true",
+      "x-upsert": "false",
     },
     body: file,
   });
 
-  if (!put.ok) {
-    throw new Error(`Storage upload failed (${put.status})`);
+  if (!putRes.ok) {
+    const body = await putRes.text().catch(() => "");
+    throw new Error(
+      `Upload PUT failed (${putRes.status} ${putRes.statusText})${
+        body ? `: ${body}` : ""
+      }`
+    );
   }
 
-  // 3) Notify API that upload is complete (stamps uploaded_at + may finalize session)
-  const complete = await fetch(
+  // 3) Mark upload complete (stamps uploaded_at + may finalize session)
+  const completeRes = await fetch(
     `/api/portal-session/${token}/uploads/${uploadId}/complete`,
     { method: "POST" }
   );
 
-  if (!complete.ok) {
-    throw new Error(`Upload completion failed (${complete.status})`);
+  const completeJson = await safeJson(completeRes);
+
+  if (!completeRes.ok) {
+    throw new Error(
+      errorFromJson(
+        completeJson,
+        `Upload complete failed (${completeRes.status} ${completeRes.statusText})`
+      )
+    );
   }
 }

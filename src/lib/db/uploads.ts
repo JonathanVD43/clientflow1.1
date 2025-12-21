@@ -143,7 +143,6 @@ export async function reviewUpload(input: {
   );
 }
 
-
 /* =========================
    Inbox (session-grouped)
    ========================= */
@@ -440,12 +439,110 @@ export async function listInboxClientsWithPendingCounts(): Promise<
 
   return clientIds
     .map((id) => ({
-      client: (clientMap.get(id) ?? null) as
-        | { id: string; name: string | null; email: string | null }
-        | null,
+      client: (clientMap.get(id) ?? null) as {
+        id: string;
+        name: string | null;
+        email: string | null;
+      } | null,
       ...byClient.get(id)!,
     }))
     .filter((x) => x.client);
+}
+
+export type ClientReviewSessionRow = {
+  session_id: string;
+  status: "OPEN" | "FINALIZED" | "EXPIRED" | string;
+  opened_at: string | null;
+  finalized_at: string | null;
+  pending_total: number;
+  pending_new: number;
+  last_uploaded_at: string | null;
+};
+
+type UploadSessionJoinRow2 = {
+  uploaded_at: string | null;
+  viewed_at: string | null;
+  submission_session: {
+    id: string;
+    status: "OPEN" | "FINALIZED" | "EXPIRED" | string;
+    opened_at: string | null;
+    finalized_at: string | null;
+  } | null;
+};
+
+export async function listReviewSessionsForClient(
+  clientId: string
+): Promise<ClientReviewSessionRow[]> {
+  assertUuid("clientId", clientId);
+
+  const { supabase, user } = await requireUser();
+
+  // We only care about sessions that still have PENDING uploads (review queue)
+  const { data, error } = await supabase
+    .from("uploads")
+    .select(
+      `
+      uploaded_at,
+      viewed_at,
+      submission_session:submission_sessions (
+        id,
+        status,
+        opened_at,
+        finalized_at
+      )
+    `
+    )
+    .eq("user_id", user.id)
+    .eq("client_id", clientId)
+    .eq("status", "PENDING")
+    .is("deleted_at", null)
+    .not("uploaded_at", "is", null)
+    .not("submission_session_id", "is", null)
+    .order("uploaded_at", { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as unknown as UploadSessionJoinRow2[];
+
+  const map = new Map<string, ClientReviewSessionRow>();
+
+  for (const r of rows) {
+    const s = r.submission_session;
+    if (!s?.id) continue;
+
+    // Only show sessions that are still meaningful to review
+    if (s.status !== "OPEN" && s.status !== "FINALIZED") continue;
+
+    const cur =
+      map.get(s.id) ??
+      ({
+        session_id: s.id,
+        status: s.status,
+        opened_at: s.opened_at ?? null,
+        finalized_at: s.finalized_at ?? null,
+        pending_total: 0,
+        pending_new: 0,
+        last_uploaded_at: null,
+      } satisfies ClientReviewSessionRow);
+
+    cur.pending_total += 1;
+    if (r.viewed_at == null) cur.pending_new += 1;
+
+    const up = r.uploaded_at ? Date.parse(r.uploaded_at) : NaN;
+    const last = cur.last_uploaded_at ? Date.parse(cur.last_uploaded_at) : NaN;
+    if (!Number.isNaN(up) && (Number.isNaN(last) || up > last)) {
+      cur.last_uploaded_at = r.uploaded_at ?? null;
+    }
+
+    map.set(s.id, cur);
+  }
+
+  // sort newest activity first
+  return Array.from(map.values()).sort((a, b) => {
+    const ta = a.last_uploaded_at ? Date.parse(a.last_uploaded_at) : 0;
+    const tb = b.last_uploaded_at ? Date.parse(b.last_uploaded_at) : 0;
+    return tb - ta;
+  });
 }
 
 export async function listPendingUploadsForClient(clientId: string) {
@@ -501,8 +598,74 @@ export async function listClientIdsWithUnseenPendingUploads(): Promise<
 }
 
 /**
- * Used by /inbox/client/[clientId] to jump to the user's current OPEN session for that client.
- * Returns null if none exists.
+ * Used by /inbox/client/[clientId] to jump to the user's current *reviewable* session for that client.
+ *
+ * IMPORTANT:
+ * - Portal uses OPEN for "still uploading"
+ * - Once all requested docs are uploaded, the portal-session becomes FINALIZED (so the link is consumed)
+ * - The user must still be able to review PENDING uploads in that FINALIZED session
+ */
+type UploadSessionJoinRow = {
+  submission_session_id: string | null;
+  uploaded_at: string | null;
+  submission_session: {
+    id: string;
+    status: "OPEN" | "FINALIZED" | "EXPIRED" | string;
+    client_id: string;
+  } | null;
+};
+
+export async function getActiveReviewSessionIdForClient(
+  clientId: string
+): Promise<string | null> {
+  assertUuid("clientId", clientId);
+
+  const { supabase, user } = await requireUser();
+
+  // Find the most recent session for this client that has at least one PENDING uploaded item.
+  // We deliberately allow session.status = FINALIZED because that's the normal "ready for review" state.
+  const { data, error } = await supabase
+    .from("uploads")
+    .select(
+      `
+      submission_session_id,
+      uploaded_at,
+      submission_session:submission_sessions (
+        id,
+        status,
+        client_id
+      )
+    `
+    )
+    .eq("user_id", user.id)
+    .eq("client_id", clientId)
+    .eq("status", "PENDING")
+    .is("deleted_at", null)
+    .not("uploaded_at", "is", null)
+    .not("submission_session_id", "is", null)
+    .order("uploaded_at", { ascending: false })
+    .limit(25);
+
+  if (error) throw error;
+
+  const rows = (data ?? []) as unknown as UploadSessionJoinRow[];
+
+  for (const r of rows) {
+    const s = r.submission_session;
+    if (!s?.id) continue;
+    if (s.client_id !== clientId) continue;
+
+    if (s.status === "OPEN" || s.status === "FINALIZED") {
+      return s.id;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Legacy helper (kept for now to avoid breaking imports elsewhere).
+ * Prefer getActiveReviewSessionIdForClient().
  */
 export async function getOpenSessionIdForClient(
   clientId: string

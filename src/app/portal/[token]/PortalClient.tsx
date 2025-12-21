@@ -116,7 +116,9 @@ export default function PortalClient({ token }: { token: string }) {
     <main className="p-6 max-w-2xl space-y-4">
       <div className="space-y-1">
         <h1 className="text-xl font-semibold">Client portal</h1>
-        <p className="text-sm opacity-70">Upload the requested documents below.</p>
+        <p className="text-sm opacity-70">
+          Upload the requested documents below.
+        </p>
       </div>
 
       {loading ? (
@@ -133,7 +135,8 @@ export default function PortalClient({ token }: { token: string }) {
           <div className="border rounded-xl p-4 space-y-1">
             <div className="font-medium">{header?.name}</div>
             <div className="text-sm opacity-70">
-              Due day: {header?.due_day_of_month ?? "—"} ({header?.due_timezone ?? "—"})
+              Due day: {header?.due_day_of_month ?? "—"} (
+              {header?.due_timezone ?? "—"})
             </div>
           </div>
 
@@ -172,7 +175,9 @@ export default function PortalClient({ token }: { token: string }) {
                       </div>
 
                       {d.description ? (
-                        <div className="text-sm opacity-70">{d.description}</div>
+                        <div className="text-sm opacity-70">
+                          {d.description}
+                        </div>
                       ) : null}
 
                       {d.allowed_mime_types?.length ? (
@@ -180,7 +185,9 @@ export default function PortalClient({ token }: { token: string }) {
                           Allowed: {d.allowed_mime_types.join(", ")}
                         </div>
                       ) : (
-                        <div className="text-xs opacity-60">Allowed: any file type (v1)</div>
+                        <div className="text-xs opacity-60">
+                          Allowed: any file type (v1)
+                        </div>
                       )}
                     </div>
 
@@ -201,15 +208,23 @@ export default function PortalClient({ token }: { token: string }) {
                           }}
                           disabled={disabled}
                         />
-                        {isBusy ? "Uploading…" : isDone ? "Submitted" : "Choose file"}
+                        {isBusy
+                          ? "Uploading…"
+                          : isDone
+                          ? "Submitted"
+                          : "Choose file"}
                       </label>
 
                       {ok[d.id] ? (
-                        <span className="text-sm text-green-700">{ok[d.id]}</span>
+                        <span className="text-sm text-green-700">
+                          {ok[d.id]}
+                        </span>
                       ) : null}
 
                       {err[d.id] ? (
-                        <span className="text-sm text-red-700">{err[d.id]}</span>
+                        <span className="text-sm text-red-700">
+                          {err[d.id]}
+                        </span>
                       ) : null}
                     </div>
                   </li>
@@ -219,8 +234,8 @@ export default function PortalClient({ token }: { token: string }) {
           )}
 
           <div className="text-xs opacity-60">
-            Tip: If a file is denied later, you’ll receive a new upload link for only those
-            files.
+            Tip: If a file is denied later, you’ll receive a new upload link for
+            only those files.
           </div>
         </>
       )}
