@@ -43,7 +43,6 @@ async function parseJsonBody<T>(req: NextRequest): Promise<JsonParseResult<T>> {
     if (!contentType.toLowerCase().includes("application/json")) {
       return { ok: false, error: "Expected application/json body" };
     }
-
     const raw = (await req.json()) as unknown;
     return { ok: true, data: raw as T };
   } catch {
@@ -65,22 +64,13 @@ function safeFilename(name: string) {
   return name.replace(/[^\w.\-() ]+/g, "_").slice(0, 180) || "file";
 }
 
-function getSupabaseUrl(): string | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? "";
-  if (!url) return null;
-  return url.replace(/\/+$/, "");
-}
-
 type SignedUploadResult = {
   signedUrl?: string;
   signedURL?: string;
   url?: string;
-  token?: string;
-  path?: string;
 };
 
 function extractSignedUrl(signed: SignedUploadResult): string | null {
-  // Different supabase-js versions have used different property names.
   if (typeof signed.signedUrl === "string" && signed.signedUrl.trim()) return signed.signedUrl;
   if (typeof signed.signedURL === "string" && signed.signedURL.trim()) return signed.signedURL;
   if (typeof signed.url === "string" && signed.url.trim()) return signed.url;
@@ -104,7 +94,6 @@ export const POST = withLoggingRoute<RouteCtx>(
         actorUserAgent: req.headers.get("user-agent") ?? undefined,
         metadata: { status: 403 },
       });
-
       return errorResponse("Invalid origin", 403);
     }
 
@@ -205,9 +194,8 @@ export const POST = withLoggingRoute<RouteCtx>(
 
     if (insErr) return errorResponse(insErr.message, 500);
 
-    // 7) Signed upload URL (ABSOLUTE URL)
+    // 7) Signed upload URL (absolute)
     const bucket = process.env.NEXT_PUBLIC_UPLOADS_BUCKET ?? "client_uploads";
-
     const { data: signed, error: signErr } = await supabase.storage
       .from(bucket)
       .createSignedUploadUrl(storage_key);
@@ -217,56 +205,11 @@ export const POST = withLoggingRoute<RouteCtx>(
 
     const signedUrl = extractSignedUrl(signed as SignedUploadResult);
     if (!signedUrl) {
-      // Fallback: if supabase-js returned only token/path, we can still build the URL.
-      // NOTE: This format depends on Supabase Storage. Prefer signedUrl from SDK above.
-      const supabaseUrl = getSupabaseUrl();
-      const token = (signed as SignedUploadResult).token;
-      if (!supabaseUrl || typeof token !== "string" || !token.trim()) {
-        return errorResponse("Signed upload url missing", 500);
-      }
-
-      // Best-effort fallback; most SDKs return signedUrl so this shouldn't be used.
-      const fallbackUrl = `${supabaseUrl}/storage/v1/upload/resumable/${bucket}/${encodeURIComponent(
-        storage_key
-      )}?token=${encodeURIComponent(token)}`;
-
-      await writeAuditEvent({
-        requestId: reqId,
-        eventType: "portal_session.upload.created",
-        severity: "info",
-        route: req.nextUrl.pathname,
-        method: req.method,
-        actorIp: getIp(req),
-        actorUserAgent: req.headers.get("user-agent") ?? undefined,
-        metadata: {
-          tokenHint: th,
-          clientId: client.id,
-          sessionId: session.id,
-          uploadId,
-          document_request_id,
-          bucket,
-          storage_key,
-          status: 200,
-          signedUrlMode: "fallback",
-        },
-      });
-
-      log.info(
-        { event: "portal_session.upload.created", sessionId: session.id, uploadId },
-        "upload record created"
+      // We intentionally do not fallback to path+token because it caused localhost URL bugs.
+      return errorResponse(
+        "Signed upload URL missing from Supabase response. Please upgrade supabase-js or adjust storage signing method.",
+        500
       );
-
-      return successResponse({
-        ok: true,
-        upload: {
-          id: uploadId,
-          bucket,
-          storage_key,
-          document_request_id,
-          submission_session_id: session.id,
-        },
-        signedUrl: fallbackUrl,
-      });
     }
 
     await writeAuditEvent({
@@ -286,7 +229,6 @@ export const POST = withLoggingRoute<RouteCtx>(
         bucket,
         storage_key,
         status: 200,
-        signedUrlMode: "sdk",
       },
     });
 

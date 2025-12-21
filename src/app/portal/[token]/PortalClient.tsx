@@ -13,7 +13,7 @@ type PortalDoc = {
   max_files: number;
   allowed_mime_types: string[] | null;
 
-  // ✅ new: provided by /api/portal-session/[token]/info
+  // provided by /api/portal-session/[token]/info
   submitted: boolean;
 };
 
@@ -54,32 +54,33 @@ export default function PortalClient({ token }: { token: string }) {
   const [ok, setOk] = useState<Record<string, string>>({});
   const [err, setErr] = useState<Record<string, string>>({});
 
-  useEffect(() => {
-    let cancelled = false;
+  async function loadInfo(signal?: AbortSignal) {
+    const res = await fetch(`/api/portal-session/${token}/info`, {
+      method: "GET",
+      cache: "no-store",
+      signal,
+    });
 
-    async function load() {
+    const json = (await res.json()) as PortalInfo;
+    setInfo(json);
+  }
+
+  useEffect(() => {
+    const ac = new AbortController();
+
+    (async () => {
       setLoading(true);
       try {
-        // ✅ switch to portal-session endpoint
-        const res = await fetch(`/api/portal-session/${token}/info`, {
-          method: "GET",
-          cache: "no-store",
-        });
-
-        const json = (await res.json()) as PortalInfo;
-
-        if (!cancelled) setInfo(json);
+        await loadInfo(ac.signal);
       } catch {
-        if (!cancelled) setInfo({ error: "Failed to load portal" });
+        // if aborted, ignore
+        if (!ac.signal.aborted) setInfo({ error: "Failed to load portal" });
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       }
-    }
+    })();
 
-    load();
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, [token]);
 
   const header = useMemo(() => {
@@ -97,14 +98,9 @@ export default function PortalClient({ token }: { token: string }) {
       await uploadFile(token, file, docId);
       setOk((p) => ({ ...p, [docId]: "Uploaded successfully ✅" }));
 
-      // Refresh info so the UI can reflect "submitted" immediately
+      // Refresh info so the UI shows "Submitted ✅"
       try {
-        const res = await fetch(`/api/portal-session/${token}/info`, {
-          method: "GET",
-          cache: "no-store",
-        });
-        const json = (await res.json()) as PortalInfo;
-        setInfo(json);
+        await loadInfo();
       } catch {
         // best-effort; upload already succeeded
       }
@@ -223,7 +219,8 @@ export default function PortalClient({ token }: { token: string }) {
           )}
 
           <div className="text-xs opacity-60">
-            Tip: If a file is denied later, you’ll receive a new upload link for only those files.
+            Tip: If a file is denied later, you’ll receive a new upload link for only those
+            files.
           </div>
         </>
       )}

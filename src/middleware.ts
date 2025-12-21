@@ -40,15 +40,17 @@ async function applyRateLimiting(req: NextRequest) {
     | typeof uploadRatelimit
     | typeof tokenCheckRatelimit = apiRatelimit;
 
-  // Tune these to match your actual API paths (safe defaults)
+  // Upload-ish endpoints (create/complete, upload URLs, etc.)
   if (
     pathname.startsWith("/api/uploads") ||
-    pathname.startsWith("/api/public/upload")
+    pathname.startsWith("/api/public/upload") ||
+    pathname.startsWith("/api/portal-session/") // ✅ NEW canonical portal API
   ) {
     rl = uploadRatelimit;
+
+    // Token check endpoints (public token validation / info)
   } else if (
     pathname.startsWith("/api/public/client") ||
-    pathname.startsWith("/api/portal/") ||
     pathname.includes("/token") ||
     pathname.includes("/validate")
   ) {
@@ -71,21 +73,11 @@ async function applyRateLimiting(req: NextRequest) {
       },
       { status: 429 }
     );
-    return withRateLimitHeaders(
-      res,
-      result.limit,
-      result.remaining,
-      result.reset
-    );
+    return withRateLimitHeaders(res, result.limit, result.remaining, result.reset);
   }
 
   const res = NextResponse.next();
-  return withRateLimitHeaders(
-    res,
-    result.limit,
-    result.remaining,
-    result.reset
-  );
+  return withRateLimitHeaders(res, result.limit, result.remaining, result.reset);
 }
 
 export async function middleware(req: NextRequest) {
@@ -96,7 +88,6 @@ export async function middleware(req: NextRequest) {
   if (rlResponse) return rlResponse;
 
   // ✅ IMPORTANT: Do NOT run Supabase auth logic for API routes
-  // (prevents load issues / timeouts when hammering API endpoints)
   if (pathname.startsWith("/api/")) {
     return NextResponse.next();
   }

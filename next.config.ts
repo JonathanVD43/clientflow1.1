@@ -13,13 +13,18 @@ const isProd = process.env.NODE_ENV === "production";
 function buildCsp() {
   const directives = [
     "default-src 'self'",
+
     // Next.js may need inline styles (styled-jsx) and/or style tags from libs.
-    // If you later add nonces/hashes, we can remove 'unsafe-inline'.
     "style-src 'self' 'unsafe-inline'",
-    // Scripts: avoid unsafe-eval in production. Dev needs eval for HMR in many setups.
+
+    // Scripts: dev needs eval for HMR; blob: is needed for some libs that create blob-based workers.
     isProd
-      ? "script-src 'self' 'unsafe-inline'"
-      : "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      ? "script-src 'self' 'unsafe-inline' blob:"
+      : "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+
+    // ✅ Allow blob workers (pdf.js and similar)
+    "worker-src 'self' blob:",
+
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
     "connect-src 'self' https:",
@@ -27,9 +32,8 @@ function buildCsp() {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    // Use CSP instead of X-Frame-Options
     "frame-ancestors 'none'",
-    // Upgrade http:// to https:// on supporting browsers (prod only)
+
     ...(isProd ? ["upgrade-insecure-requests"] : []),
   ];
 
@@ -93,39 +97,39 @@ const nextConfig: NextConfig = {
 };
 
 export default withSentryConfig(nextConfig, {
- // For all available options, see:
- // https://www.npmjs.com/package/@sentry/webpack-plugin#options
+  // For all available options, see:
+  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
 
- org: "salus-software",
+  org: "salus-software",
 
- project: "javascript-nextjs",
+  project: "javascript-nextjs",
 
- // Only print logs for uploading source maps in CI
- silent: !process.env.CI,
+  // Only print logs for uploading source maps in CI
+  silent: !process.env.CI,
 
- // For all available options, see:
- // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
+  // For all available options, see:
+  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 
- // Upload a larger set of source maps for prettier stack traces (increases build time)
- widenClientFileUpload: true,
+  // Upload a larger set of source maps for prettier stack traces (increases build time)
+  widenClientFileUpload: true,
 
- // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
- // This can increase your server load as well as your hosting bill.
- // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
- // side errors will fail.
- tunnelRoute: "/monitoring",
+  // Route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
+  // This can increase your server load as well as your hosting bill.
+  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
+  // side errors will fail.
+  tunnelRoute: "/monitoring",
 
- webpack: {
-   // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
-   // See the following for more information:
-   // https://docs.sentry.io/product/crons/
-   // https://vercel.com/docs/cron-jobs
-   automaticVercelMonitors: true,
+  webpack: {
+    // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
+    // See the following for more information:
+    // https://docs.sentry.io/product/crons/
+    // https://vercel.com/docs/cron-jobs
+    automaticVercelMonitors: true,
 
-   // Tree-shaking options for reducing bundle size
-   treeshake: {
-     // Automatically tree-shake Sentry logger statements to reduce bundle size
-     removeDebugLogging: true,
-   },
- },
+    // Tree-shaking options for reducing bundle size
+    treeshake: {
+      // Automatically tree-shake Sentry logger statements to reduce bundle size
+      removeDebugLogging: true,
+    },
+  },
 });

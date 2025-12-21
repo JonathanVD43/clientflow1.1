@@ -25,8 +25,20 @@ function isCreateOk(x: unknown): x is CreateOk {
   );
 }
 
-export async function uploadFile(token: string, file: File, documentRequestId: string) {
-  // 1) Create upload row + signed URL
+function getErrorMessage(x: unknown, fallback: string) {
+  if (typeof x === "object" && x !== null) {
+    const msg = (x as { error?: unknown }).error;
+    if (typeof msg === "string" && msg.trim()) return msg;
+  }
+  return fallback;
+}
+
+export async function uploadFile(
+  token: string,
+  file: File,
+  documentRequestId: string
+) {
+  // 1) create upload row + get signed upload URL
   const initRes = await fetch(`/api/portal-session/${token}/uploads/create`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -41,17 +53,15 @@ export async function uploadFile(token: string, file: File, documentRequestId: s
   const initJson = (await initRes.json()) as unknown;
 
   if (!initRes.ok || !isCreateOk(initJson)) {
-    const err =
-      typeof (initJson as { error?: unknown })?.error === "string"
-        ? String((initJson as { error: string }).error)
-        : `Failed to start upload (${initRes.status})`;
-    throw new Error(err);
+    throw new Error(
+      getErrorMessage(initJson, `Failed to start upload (${initRes.status})`)
+    );
   }
 
   const uploadId = initJson.upload.id;
   const signedUrl = initJson.signedUrl;
 
-  // 2) Upload bytes to Supabase Storage (absolute URL, not localhost)
+  // 2) upload bytes to Supabase Storage
   const putRes = await fetch(signedUrl, {
     method: "PUT",
     headers: {
@@ -65,7 +75,7 @@ export async function uploadFile(token: string, file: File, documentRequestId: s
     throw new Error(`Storage upload failed (${putRes.status})`);
   }
 
-  // 3) Complete
+  // 3) complete
   const completeRes = await fetch(
     `/api/portal-session/${token}/uploads/${uploadId}/complete`,
     { method: "POST" }
