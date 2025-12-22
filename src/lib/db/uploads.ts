@@ -27,7 +27,7 @@ function daysFromNowIso(days: number) {
 
 export async function listUploadsForClient(
   clientId: string
-): Promise<UploadRow[]> {
+): Promise<UploadRow[]> { 
   assertUuid("clientId", clientId);
 
   const { supabase, user } = await requireUser();
