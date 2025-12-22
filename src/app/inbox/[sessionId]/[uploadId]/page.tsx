@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getUpload, markUploadViewed } from "@/lib/db/uploads";
 import { acceptUploadAction, denyUploadAction } from "./actions";
+import PreviewFrame from "./PreviewFrame";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -49,33 +50,44 @@ export default async function UploadViewPage({
 
   const upload = await getUpload(uploadId);
   const previewable = isPreviewable(upload.mime_type ?? null);
-  const previewSrc = `/api/inbox/uploads/${uploadId}/preview`;
+  const canReview = upload.status === "PENDING";
 
-  const isPending = upload.status === "PENDING";
+  // Unified “download” entry point (server returns JSON with signedUrl)
+  // For v1 UX we still link to the endpoint; later we can make a button that redirects to signedUrl.
+  const downloadApiHref = `/api/inbox/uploads/${uploadId}/view-url?download=1`;
 
   return (
     <main className="p-6 max-w-4xl space-y-4">
       <div className="space-y-1">
-        <h1 className="text-xl font-semibold">View upload</h1>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold">View upload</h1>
+            <div className="text-sm opacity-70 break-words">
+              {upload.original_filename}{" "}
+              {upload.mime_type ? <span>· {upload.mime_type}</span> : null}
+            </div>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-sm opacity-80">
-          <span className="font-medium">{upload.original_filename}</span>
-          {upload.mime_type ? <span>· {upload.mime_type}</span> : null}
-          {statusBadge(upload.status)}
+          <div className="shrink-0 pt-1">{statusBadge(upload.status)}</div>
         </div>
 
-        <div className="flex gap-3 text-sm pt-1">
+        <div className="flex flex-wrap gap-3 text-sm pt-1">
           <Link className="underline" href={`/inbox/${sessionId}`}>
             Back to session
           </Link>
           <Link className="underline" href="/inbox">
             Inbox
           </Link>
+
+          {/* Download entrypoint */}
+          <a className="underline" href={downloadApiHref}>
+            Download
+          </a>
         </div>
       </div>
 
       {saved ? (
-        <div className="border border-green-300 bg-green-50 text-green-900 rounded-lg p-3 text-sm">
+        <div className="border border-green-300 bg-green-50 text-green-800 rounded-lg p-3 text-sm">
           {saved === "accepted"
             ? "Upload approved ✅"
             : saved === "denied"
@@ -85,12 +97,12 @@ export default async function UploadViewPage({
       ) : null}
 
       {error ? (
-        <div className="border border-red-300 bg-red-50 text-red-900 rounded-lg p-3 text-sm">
+        <div className="border border-red-300 bg-red-50 text-red-800 rounded-lg p-3 text-sm">
           {error}
         </div>
       ) : null}
 
-      {!isPending ? (
+      {!canReview ? (
         <div className="border rounded-xl p-4 space-y-2">
           <div className="font-medium">This file has already been reviewed</div>
           <div className="text-sm opacity-70">
@@ -105,35 +117,30 @@ export default async function UploadViewPage({
         </div>
       ) : (
         <div className="border rounded-xl p-4 space-y-3">
-          <div className="font-medium">Review decision</div>
+          <div className="font-medium">Review</div>
 
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <form action={acceptUploadAction.bind(null, sessionId, uploadId)}>
-              <button className="border rounded-lg px-4 py-2 w-full sm:w-auto">
-                Approve
-              </button>
+              <button className="border rounded-lg px-4 py-2">Approve</button>
             </form>
 
             <form
               action={denyUploadAction.bind(null, sessionId, uploadId)}
-              className="space-y-2"
+              className="flex-1 space-y-2"
             >
-              <label className="text-sm block">Denial reason (required)</label>
               <textarea
                 name="denial_reason"
                 className="w-full border rounded-lg p-2"
                 rows={3}
-                placeholder="Explain what’s wrong and what the client should re-upload…"
+                placeholder="Reason for denial (required)"
                 required
               />
-              <button className="border rounded-lg px-4 py-2 w-full sm:w-auto">
-                Deny
-              </button>
+              <button className="border rounded-lg px-4 py-2">Deny</button>
             </form>
           </div>
 
           <div className="text-xs opacity-60">
-            Once you approve/deny, this file can’t be decided again (UI rule).
+            Once accepted/denied, you won’t be able to re-decide from this page.
           </div>
         </div>
       )}
@@ -146,14 +153,7 @@ export default async function UploadViewPage({
           </div>
         </div>
       ) : (
-        <div className="border rounded-xl overflow-hidden">
-          <iframe
-            title="Preview"
-            src={previewSrc}
-            className="w-full"
-            style={{ height: "80vh" }}
-          />
-        </div>
+        <PreviewFrame uploadId={uploadId} />
       )}
     </main>
   );

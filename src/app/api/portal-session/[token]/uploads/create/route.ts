@@ -26,12 +26,15 @@ type SessionRow = {
 type ClientRow = {
   id: string;
   user_id: string;
+  name: string | null;
   active: boolean;
   portal_enabled: boolean;
 };
 
 type AllowedJoinRow = { id: string };
 type ExistingUploadRow = { id: string };
+
+type DocumentRequestTitleRow = { title: string | null };
 
 type JsonParseOk<T> = { ok: true; data: T };
 type JsonParseErr = { ok: false; error: string };
@@ -62,6 +65,44 @@ function getIp(req: NextRequest) {
 
 function safeFilename(name: string) {
   return name.replace(/[^\w.\-() ]+/g, "_").slice(0, 180) || "file";
+}
+
+function pickExtensionFromFilename(filename: string): string {
+  const base = filename.trim();
+  const lastDot = base.lastIndexOf(".");
+  if (lastDot <= 0) return "";
+  const ext = base.slice(lastDot + 1).trim();
+  if (!ext) return "";
+  // keep it conservative
+  if (!/^[a-zA-Z0-9]{1,10}$/.test(ext)) return "";
+  return `.${ext.toLowerCase()}`;
+}
+
+function pickExtensionFromMime(mime: string | null): string {
+  if (!mime) return "";
+  const m = mime.toLowerCase();
+  if (m === "application/pdf") return ".pdf";
+  if (m === "image/png") return ".png";
+  if (m === "image/jpeg") return ".jpg";
+  if (m === "text/plain") return ".txt";
+  return "";
+}
+
+function buildReceivedFilename(args: {
+  clientName: string | null;
+  docTitle: string | null;
+  originalFilename: string;
+  mimeType: string | null;
+}): string {
+  const client = (args.clientName ?? "").trim() || "client";
+  const doc = (args.docTitle ?? "").trim() || "document";
+
+  // Prefer extension from the real filename; fall back to mime.
+  const ext = pickExtensionFromFilename(args.originalFilename) || pickExtensionFromMime(args.mimeType);
+
+  const base = `${client}_${doc}${ext}`;
+  // Make it filesystem/header safe
+  return safeFilename(base).replace(/\s+/g, "_");
 }
 
 type SignedUploadResult = {
@@ -100,21 +141,20 @@ export const POST = withLoggingRoute<RouteCtx>(
     const { token } = await routeCtx.params;
     const cleanToken = (token ?? "").trim();
     const th = tokenHint(cleanToken);
-
     if (!cleanToken) return errorResponse("Missing token", 400);
 
     // 1) Parse JSON
     const parsed = await parseJsonBody<Body>(req);
     if (!parsed.ok) return errorResponse(parsed.error, 400);
 
-    const filename = String(parsed.data.filename ?? "").trim();
+    const rawFilename = String(parsed.data.filename ?? "").trim();
     const document_request_id = String(parsed.data.document_request_id ?? "").trim();
     const mime_type =
       parsed.data.mime_type != null ? String(parsed.data.mime_type).trim() : null;
     const size_bytes =
       typeof parsed.data.size_bytes === "number" ? parsed.data.size_bytes : null;
 
-    if (!filename) return errorResponse("Missing filename", 400);
+    if (!rawFilename) return errorResponse("Missing filename", 400);
     if (!document_request_id || !isValidUuid(document_request_id)) {
       return errorResponse("Invalid document_request_id", 400);
     }
@@ -135,7 +175,7 @@ export const POST = withLoggingRoute<RouteCtx>(
     // 3) Resolve client (must be active + portal enabled)
     const { data: client, error: clientErr } = await supabase
       .from("clients")
-      .select("id,user_id,active,portal_enabled")
+      .select("id,user_id,name,active,portal_enabled")
       .eq("id", session.client_id)
       .eq("user_id", session.user_id)
       .maybeSingle<ClientRow>();
@@ -156,6 +196,24 @@ export const POST = withLoggingRoute<RouteCtx>(
     if (allowedErr) return errorResponse(allowedErr.message, 500);
     if (!allowed) return errorResponse("This file is not requested for this link", 403);
 
+    // 4b) Load doc title (for naming)
+    const { data: docRow, error: docErr } = await supabase
+      .from("document_requests")
+      .select("title")
+      .eq("id", document_request_id)
+      .eq("client_id", client.id)
+      .eq("user_id", session.user_id)
+      .maybeSingle<DocumentRequestTitleRow>();
+
+    if (docErr) return errorResponse(docErr.message, 500);
+
+    const receivedFilename = buildReceivedFilename({
+      clientName: client.name ?? null,
+      docTitle: docRow?.title ?? null,
+      originalFilename: rawFilename,
+      mimeType: mime_type,
+    });
+
     // 5) Enforce one upload per field per session
     const { data: existing, error: existErr } = await supabase
       .from("uploads")
@@ -175,7 +233,7 @@ export const POST = withLoggingRoute<RouteCtx>(
         ? globalThis.crypto.randomUUID()
         : (await import("node:crypto")).randomUUID();
 
-    const storage_key = `clients/${client.id}/${uploadId}/${safeFilename(filename)}`;
+    const storage_key = `clients/${client.id}/${uploadId}/${safeFilename(receivedFilename)}`;
     const delete_after_at = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
     const { error: insErr } = await supabase.from("uploads").insert({
@@ -184,7 +242,7 @@ export const POST = withLoggingRoute<RouteCtx>(
       client_id: client.id,
       submission_session_id: session.id,
       document_request_id,
-      original_filename: filename,
+      original_filename: receivedFilename, // ✅ what you see/download later
       storage_key,
       mime_type,
       size_bytes,
@@ -205,7 +263,6 @@ export const POST = withLoggingRoute<RouteCtx>(
 
     const signedUrl = extractSignedUrl(signed as SignedUploadResult);
     if (!signedUrl) {
-      // We intentionally do not fallback to path+token because it caused localhost URL bugs.
       return errorResponse(
         "Signed upload URL missing from Supabase response. Please upgrade supabase-js or adjust storage signing method.",
         500
@@ -228,6 +285,7 @@ export const POST = withLoggingRoute<RouteCtx>(
         document_request_id,
         bucket,
         storage_key,
+        original_filename: receivedFilename,
         status: 200,
       },
     });
@@ -243,6 +301,7 @@ export const POST = withLoggingRoute<RouteCtx>(
         id: uploadId,
         bucket,
         storage_key,
+        original_filename: receivedFilename,
         document_request_id,
         submission_session_id: session.id,
       },

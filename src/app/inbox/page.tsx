@@ -1,55 +1,84 @@
+// src/app/inbox/page.tsx
 import Link from "next/link";
-import { listInboxClientsWithPendingCounts } from "@/lib/db/uploads";
+import { listInboxSessions } from "@/lib/db/uploads";
+
+function fmt(ts: string | null) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  // Keep it consistent with your other pages
+  return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
+}
 
 export default async function InboxPage() {
-  const rows = await listInboxClientsWithPendingCounts();
-
-  // optional safety: only show clients that actually have pending uploads
-  const pendingRows = rows.filter((r) => Number(r.pending_total ?? 0) > 0);
+  const sessions = await listInboxSessions();
 
   return (
     <main className="p-6 max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Inbox</h1>
-        <Link className="underline" href="/clients">
-          Clients
-        </Link>
+        <div className="space-y-1">
+          <h1 className="text-xl font-semibold">Inbox</h1>
+          <div className="text-sm opacity-70">
+            Sessions with pending uploads
+          </div>
+
+          <div className="flex gap-3 text-sm pt-1">
+            <Link className="underline" href="/clients">
+              Clients
+            </Link>
+          </div>
+        </div>
       </div>
 
-      {pendingRows.length === 0 ? (
+      {sessions.length === 0 ? (
         <div className="opacity-70">No pending uploads.</div>
       ) : (
         <ul className="space-y-2">
-          {pendingRows.map((r) => (
-            <li key={r.client_id} className="border rounded-xl p-4">
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="font-medium truncate">
-                    {r.client?.name ?? "Client"}
+          {sessions.map((s) => (
+            <li key={s.session_id} className="border rounded-xl p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <div className="font-medium truncate flex items-center gap-2">
+                    <span className="truncate">{s.client_name}</span>
+
+                    {s.new_count > 0 ? (
+                      <span className="text-xs border rounded-full px-2 py-0.5">
+                        {s.new_count} new
+                      </span>
+                    ) : null}
                   </div>
 
-                  {r.client?.email ? (
+                  {s.client_email ? (
                     <div className="text-sm opacity-70 truncate">
-                      {r.client.email}
+                      {s.client_email}
                     </div>
                   ) : null}
 
                   <div className="text-sm opacity-70">
-                    Pending: {r.pending_total ?? 0}
-                    {Number(r.pending_new ?? 0) > 0 ? (
-                      <span className="ml-2 text-xs border rounded-full px-2 py-0.5">
-                        {r.pending_new} new
-                      </span>
-                    ) : null}
+                    Pending: {s.pending_count}
+                  </div>
+
+                  <div className="text-xs opacity-60">
+                    Session: <span className="font-mono">{s.session_id}</span>
+                    {" · "}Opened: {fmt(s.opened_at)}
+                    {" · "}Last upload: {fmt(s.last_uploaded_at)}
+                  </div>
+
+                  <div className="flex gap-3 text-sm pt-2">
+                    <Link className="underline" href={`/inbox/${s.session_id}`} prefetch={false}>
+                      Open session
+                    </Link>
+                    <Link className="underline" href={`/clients/${s.client_id}`} prefetch={false}>
+                      Client settings
+                    </Link>
                   </div>
                 </div>
 
                 <Link
-                  className="underline shrink-0"
-                  href={`/inbox/client/${r.client_id}`}
+                  className="underline text-sm shrink-0"
+                  href={`/inbox/${s.session_id}`}
                   prefetch={false}
                 >
-                  Open
+                  Review
                 </Link>
               </div>
             </li>
