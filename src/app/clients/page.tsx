@@ -1,3 +1,4 @@
+// src/app/clients/page.tsx
 import Link from "next/link";
 import { supabaseServer } from "@/lib/supabase/server";
 import { listClientsWithProgress } from "@/lib/db/clients";
@@ -112,7 +113,7 @@ export default async function ClientsPage() {
 
             return (
               <li key={c.id} className="border rounded-xl p-4">
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="font-medium truncate flex items-center gap-2">
                       <span className="truncate">{c.name}</span>
@@ -124,7 +125,9 @@ export default async function ClientsPage() {
                     </div>
 
                     {c.email ? (
-                      <div className="text-sm opacity-70 truncate">{c.email}</div>
+                      <div className="text-sm opacity-70 truncate">
+                        {c.email}
+                      </div>
                     ) : null}
 
                     <div className="text-sm opacity-70">
@@ -140,13 +143,26 @@ export default async function ClientsPage() {
                     ) : null}
                   </div>
 
-                  <Link
-                    className="underline shrink-0"
-                    href={`/clients/${c.id}`}
-                    prefetch={false}
-                  >
-                    Open
-                  </Link>
+                  {/* ✅ Actions */}
+                  <div className="shrink-0 flex flex-col items-end gap-2">
+                    {/* "Open" now goes to the client-specific inbox */}
+                    <Link
+                      className="underline"
+                      href={`/inbox/client/${c.id}`}
+                      prefetch={false}
+                    >
+                      Open
+                    </Link>
+
+                    {/* New: Settings goes to client settings page */}
+                    <Link
+                      className="underline text-sm opacity-80"
+                      href={`/clients/${c.id}`}
+                      prefetch={false}
+                    >
+                      Settings
+                    </Link>
+                  </div>
                 </div>
               </li>
             );

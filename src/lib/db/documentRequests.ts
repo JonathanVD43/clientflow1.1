@@ -10,7 +10,10 @@ export async function listDocumentRequests(clientId: string) {
 
   const { data, error } = await supabase
     .from("document_requests")
-    .select("id,title,description,required,active,sort_order,created_at,updated_at")
+    // ✅ document_requests uses created_at/updated_at (NOT uploaded_at)
+    .select(
+      "id,title,description,required,active,sort_order,created_at,updated_at,max_files,allowed_mime_types"
+    )
     .eq("client_id", clientId)
     .eq("user_id", user.id)
     .order("sort_order", { ascending: true })

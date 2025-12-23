@@ -2,7 +2,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirectWithError, redirectWithSuccess } from "@/lib/navigation/redirects";
+import {
+  redirectWithError,
+  redirectWithSuccess,
+} from "@/lib/navigation/redirects";
 import { assertUuid } from "@/lib/validation/uuid";
 import { getSessionReviewSummary } from "@/lib/db/uploads";
 import { createSubmissionSessionForClient } from "@/lib/db/submissionSessions";
@@ -23,7 +26,11 @@ export async function requestReplacementsAction(sessionId: string) {
       .filter((id): id is string => typeof id === "string" && id.length > 0);
 
     if (documentRequestIds.length === 0) {
-      redirectWithError(`/inbox/${sessionId}`, "No denied files to request replacements for.");
+      redirectWithError(
+        `/inbox/${sessionId}`,
+        "No denied files to request replacements for."
+      );
+      return;
     }
 
     const created = await createSubmissionSessionForClient({
@@ -36,7 +43,9 @@ export async function requestReplacementsAction(sessionId: string) {
 
     // send reviewer to client page with token so they can copy it / see it
     redirectWithSuccess(
-      `/clients/${summary.client.id}?requestToken=${encodeURIComponent(created.public_token)}`,
+      `/clients/${summary.client.id}?requestToken=${encodeURIComponent(
+        created.public_token
+      )}`,
       "replacement_link_created"
     );
   } catch (e: unknown) {

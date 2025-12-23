@@ -1,5 +1,9 @@
+// src/app/inbox/[sessionId]/page.tsx
 import Link from "next/link";
-import { listPendingUploadsForSession, getSessionReviewSummary } from "@/lib/db/uploads";
+import {
+  listPendingUploadsForSession,
+  getSessionReviewSummary,
+} from "@/lib/db/uploads";
 import { requestReplacementsAction } from "./actions";
 
 const UUID_RE =
@@ -14,8 +18,10 @@ function fmt(ts: string | null) {
 function statusBadge(status: string) {
   const base = "text-xs border rounded-full px-2 py-0.5";
   if (status === "PENDING") return <span className={base}>Pending</span>;
-  if (status === "ACCEPTED") return <span className={`${base} text-green-700`}>Accepted</span>;
-  if (status === "DENIED") return <span className={`${base} text-red-700`}>Denied</span>;
+  if (status === "ACCEPTED")
+    return <span className={`${base} text-green-700`}>Accepted</span>;
+  if (status === "DENIED")
+    return <span className={`${base} text-red-700`}>Denied</span>;
   return <span className={`${base} opacity-70`}>{status}</span>;
 }
 
@@ -50,7 +56,8 @@ export default async function InboxSessionPage({
       <main className="p-6 space-y-2">
         <h1 className="text-xl font-semibold">Invalid session</h1>
         <p className="opacity-70">
-          This doesn’t look like a valid UUID: <span className="font-mono">{sessionId}</span>
+          This doesn’t look like a valid UUID:{" "}
+          <span className="font-mono">{sessionId}</span>
         </p>
         <Link className="underline" href="/inbox">
           Back to inbox
@@ -75,7 +82,8 @@ export default async function InboxSessionPage({
             Client: <span className="font-medium">{client.name}</span>
           </div>
           <div className="text-xs opacity-60">
-            Session: <span className="font-mono">{session.id}</span> · Opened: {fmt(session.opened_at)}
+            Session: <span className="font-mono">{session.id}</span> · Opened:{" "}
+            {fmt(session.opened_at)}
           </div>
 
           <div className="flex gap-3 text-sm pt-1">
@@ -110,27 +118,40 @@ export default async function InboxSessionPage({
             const viewHref = `/inbox/${sessionId}/${u.id}`;
 
             return (
-              <li key={u.id} className="border rounded-xl p-4 space-y-2">
+              <li
+                key={`pending-${u.id}`}
+                className="border rounded-xl p-4 space-y-2"
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 space-y-1">
                     <div className="font-medium truncate flex items-center gap-2">
                       <span className="truncate">{u.original_filename}</span>
 
                       {isNew ? (
-                        <span className="text-xs border rounded-full px-2 py-0.5">New</span>
+                        <span className="text-xs border rounded-full px-2 py-0.5">
+                          New
+                        </span>
                       ) : null}
                     </div>
 
                     <div className="text-xs opacity-60">
                       Uploaded: {fmt(u.uploaded_at)}
                       {u.size_bytes != null ? (
-                        <span className="ml-2">· {u.size_bytes.toLocaleString()} bytes</span>
+                        <span className="ml-2">
+                          · {u.size_bytes.toLocaleString()} bytes
+                        </span>
                       ) : null}
-                      {u.mime_type ? <span className="ml-2">· {u.mime_type}</span> : null}
+                      {u.mime_type ? (
+                        <span className="ml-2">· {u.mime_type}</span>
+                      ) : null}
                     </div>
                   </div>
 
-                  <Link className="underline text-sm shrink-0" href={viewHref} prefetch={false}>
+                  <Link
+                    className="underline text-sm shrink-0"
+                    href={viewHref}
+                    prefetch={false}
+                  >
                     View
                   </Link>
                 </div>
@@ -156,11 +177,12 @@ export default async function InboxSessionPage({
       <div className="space-y-1">
         <h1 className="text-xl font-semibold">Review complete</h1>
         <div className="text-sm opacity-70">
-          Review complete for this request · <span className="font-medium">{summary.client.name}</span>
+          Review complete for this request ·{" "}
+          <span className="font-medium">{summary.client.name}</span>
         </div>
         <div className="text-xs opacity-60">
-          Session: <span className="font-mono">{summary.session.id}</span> · Status:{" "}
-          {statusBadge(summary.session.status)}
+          Session: <span className="font-mono">{summary.session.id}</span> ·
+          Status: {statusBadge(summary.session.status)}
         </div>
 
         <div className="flex gap-3 text-sm pt-1">
@@ -181,8 +203,8 @@ export default async function InboxSessionPage({
 
       <div className="border rounded-xl p-4 space-y-1">
         <div className="text-sm">
-          Accepted: <span className="font-medium">{acceptedCount}</span> · Denied:{" "}
-          <span className="font-medium">{deniedCount}</span>
+          Accepted: <span className="font-medium">{acceptedCount}</span> ·
+          Denied: <span className="font-medium">{deniedCount}</span>
         </div>
         <div className="text-xs opacity-60">
           Accepted files remain downloadable until their expiry time.
@@ -196,17 +218,26 @@ export default async function InboxSessionPage({
         ) : (
           <ul className="space-y-2">
             {summary.accepted.map((u) => (
-              <li key={u.id} className="border rounded-xl p-4">
+              <li
+                key={`accepted-${u.upload_id}`}
+                className="border rounded-xl p-4"
+              >
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="font-medium truncate">{u.document_title}</div>
-                    <div className="text-sm opacity-70 truncate">{u.original_filename}</div>
+                    <div className="text-sm opacity-70 truncate">
+                      {u.original_filename}
+                    </div>
                     <div className="text-xs opacity-60">
                       {u.delete_after_at ? expiresInLabel(u.delete_after_at) : "—"}
                     </div>
                   </div>
 
-                  <Link className="underline shrink-0" href={`/inbox/${sessionId}/${u.id}`} prefetch={false}>
+                  <Link
+                    className="underline shrink-0"
+                    href={`/inbox/${sessionId}/${u.upload_id}`}
+                    prefetch={false}
+                  >
                     View
                   </Link>
                 </div>
@@ -223,14 +254,23 @@ export default async function InboxSessionPage({
         ) : (
           <ul className="space-y-2">
             {summary.denied.map((u) => (
-              <li key={u.id} className="border rounded-xl p-4 space-y-2">
+              <li
+                key={`denied-${u.upload_id}`}
+                className="border rounded-xl p-4 space-y-2"
+              >
                 <div className="flex items-center justify-between gap-4">
                   <div className="min-w-0">
                     <div className="font-medium truncate">{u.document_title}</div>
-                    <div className="text-sm opacity-70 truncate">{u.original_filename}</div>
+                    <div className="text-sm opacity-70 truncate">
+                      {u.original_filename}
+                    </div>
                   </div>
 
-                  <Link className="underline shrink-0" href={`/inbox/${sessionId}/${u.id}`} prefetch={false}>
+                  <Link
+                    className="underline shrink-0"
+                    href={`/inbox/${sessionId}/${u.upload_id}`}
+                    prefetch={false}
+                  >
                     View
                   </Link>
                 </div>

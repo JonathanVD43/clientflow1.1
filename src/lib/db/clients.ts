@@ -10,7 +10,9 @@ export async function listClients() {
   // this query still only fetches the signed-in user's rows.
   const { data, error } = await supabase
     .from("clients")
-    .select("id,name,email,active,portal_enabled,public_token,created_at,updated_at")
+    .select(
+      "id,name,email,active,portal_enabled,public_token,created_at,updated_at"
+    )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -51,6 +53,7 @@ export async function getClient(clientId: string) {
     .select(
       "id,name,email,phone_number,active,portal_enabled,public_token,notify_by_email,due_day_of_month,due_timezone,created_at,updated_at"
     )
+
     .eq("id", clientId)
     .eq("user_id", user.id) // ✅ defense-in-depth + matches RLS intent
     .single();
@@ -126,7 +129,7 @@ export async function listClientsWithProgress() {
     .select(
       "id,name,email,active,portal_enabled,public_token,created_at,updated_at,due_day_of_month,due_timezone,required_total,required_received"
     )
-    .eq("user_id", user.id) // defense-in-depth
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) throw error;

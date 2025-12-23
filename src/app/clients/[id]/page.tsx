@@ -1,3 +1,4 @@
+// src/app/clients/[id]/page.tsx
 import Link from "next/link";
 import { getClient } from "@/lib/db/clients";
 import { listDocumentRequests } from "@/lib/db/documentRequests";

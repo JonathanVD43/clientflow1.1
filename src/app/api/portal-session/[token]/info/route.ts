@@ -69,9 +69,7 @@ export async function GET(
   // 2) Resolve client
   const { data: client, error: clientErr } = await supabase
     .from("clients")
-    .select(
-      "id,name,active,portal_enabled,due_day_of_month,due_timezone"
-    )
+    .select("id,name,active,portal_enabled,due_day_of_month,due_timezone")
     .eq("id", session.client_id)
     .eq("user_id", session.user_id)
     .maybeSingle<ClientRow>();
@@ -101,6 +99,7 @@ export async function GET(
     )
     .eq("submission_session_id", session.id)
     .eq("user_id", session.user_id)
+    // ✅ join table has created_at, not uploaded_at
     .order("created_at", { ascending: true })
     .returns<RequestedJoinRow[]>();
 

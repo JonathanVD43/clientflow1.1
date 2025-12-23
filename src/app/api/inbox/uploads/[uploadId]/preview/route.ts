@@ -1,12 +1,20 @@
+// src/app/api/inbox/uploads/[uploadId]/preview/route.ts
 import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { assertUuid } from "@/lib/validation/uuid";
-import { createSignedDownloadUrl } from "@/lib/db/uploads";
+import { getUploadForDownload } from "@/lib/db/uploads";
 
+/**
+ * Sanitize filenames for inline Content-Disposition
+ */
 function safeInlineFilename(name: string) {
   return name.replace(/[^\w.\-()+ ]/g, "_").slice(0, 150) || "file";
 }
 
+/**
+ * Only allow types that browsers can safely preview inline
+ */
 function isPreviewable(mime: string | null) {
   if (!mime) return false;
   if (mime === "application/pdf") return true;
@@ -28,7 +36,7 @@ export async function GET(
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  // Require signed-in user
+  // Require signed-in user (preview is not public)
   const supabase = await supabaseServer();
   const {
     data: { user },
@@ -39,34 +47,43 @@ export async function GET(
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  // Get a short-lived signed URL (and apply 72h retention rule via helper)
   let signedUrl: string;
   let mime_type: string | null;
   let filename: string;
 
   try {
-    const res = await createSignedDownloadUrl({
-      uploadId,
-      expiresInSeconds: 60,
-      download: false,
-    });
+    // 1. DB-layer logic: ownership + retention + viewed marking
+    const meta = await getUploadForDownload(uploadId);
+    mime_type = meta.mime_type;
+    filename = meta.filename;
 
-    signedUrl = res.signedUrl;
-    mime_type = res.mime_type;
-    filename = res.filename;
+    if (!isPreviewable(mime_type)) {
+      return NextResponse.json(
+        { error: "Preview not available for this file type" },
+        { status: 415 }
+      );
+    }
+
+    // 2. Storage signing (service role)
+    const admin = supabaseAdmin();
+
+    const { data, error } = await admin.storage
+      .from("client_uploads")
+      .createSignedUrl(meta.storage_key, 60, {
+        download: false,
+      });
+
+    if (error || !data?.signedUrl) {
+      throw new Error(error?.message || "Could not sign preview URL");
+    }
+
+    signedUrl = data.signedUrl;
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not create signed url";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
-  if (!isPreviewable(mime_type)) {
-    return NextResponse.json(
-      { error: "Preview not available for this file type" },
-      { status: 415 }
-    );
-  }
-
-  // Fetch the file server-side and stream it back (same-origin)
+  // Fetch from storage and stream back same-origin
   const fileRes = await fetch(signedUrl);
   if (!fileRes.ok || !fileRes.body) {
     return NextResponse.json(
