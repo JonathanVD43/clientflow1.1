@@ -3,7 +3,8 @@ export type EmailTemplateName =
   | "manual_request_link"
   | "replacement_link"
   | "session_finalized_notify"
-  | "all_docs_accepted";
+  | "all_docs_accepted"
+  | "due_reminder_14d";
 
 type ManualRequestPayload = {
   clientName?: string;
@@ -25,19 +26,22 @@ type AllDocsAcceptedPayload = {
   clientName?: string;
 };
 
+type DueReminder14dPayload = {
+  clientName?: string;
+  link?: string;
+  dueOn?: string; // YYYY-MM-DD
+};
+
 type TemplatePayloadMap = {
   manual_request_link: ManualRequestPayload;
   replacement_link: ReplacementPayload;
   session_finalized_notify: SessionFinalizedPayload;
   all_docs_accepted: AllDocsAcceptedPayload;
+  due_reminder_14d: DueReminder14dPayload;
 };
 
 type RenderedEmail = { subject: string; html: string; text: string };
 
-/**
- * Very simple launch templates.
- * Later you can move to DB-driven templates if you want.
- */
 export function renderTemplate<N extends EmailTemplateName>(
   name: N,
   payload: TemplatePayloadMap[N]
@@ -87,6 +91,27 @@ export function renderTemplate<N extends EmailTemplateName>(
         <p>You don’t need to do anything else.</p>
       `,
       text: `Thanks — we’ve received and accepted all your requested documents for: ${clientName}.`,
+    };
+  }
+
+  if (name === "due_reminder_14d") {
+    const p = payload as DueReminder14dPayload;
+    const clientName = String(p.clientName ?? "your account");
+    const link = String(p.link ?? "");
+    const dueOn = String(p.dueOn ?? "");
+    const dueLine = dueOn ? `<p><strong>Due date:</strong> ${dueOn}</p>` : "";
+    return {
+      subject: `Reminder: documents due soon for ${clientName}`,
+      html: `
+        <p>Hello,</p>
+        <p>This is a friendly reminder that your documents are due in about 14 days for:</p>
+        <p><strong>${clientName}</strong></p>
+        ${dueLine}
+        <p>Please upload using this link:</p>
+        <p><a href="${link}">${link}</a></p>
+        <p>Thanks.</p>
+      `,
+      text: `Reminder: documents due soon for ${clientName}${dueOn ? ` (Due: ${dueOn})` : ""}. Upload here: ${link}`,
     };
   }
 

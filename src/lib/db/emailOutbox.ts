@@ -6,7 +6,8 @@ export type OutboxTemplate =
   | "manual_request_link"
   | "replacement_link"
   | "session_finalized_notify"
-  | "all_docs_accepted";
+  | "all_docs_accepted"
+  | "due_reminder_14d";
 
 type PostgrestErrorLike = { code?: string | null; message?: string | null };
 
@@ -33,7 +34,6 @@ export async function enqueueEmail(input: {
     status: "pending",
   });
 
-  // unique violation => idempotent OK
   if (error) {
     const e = error as unknown as PostgrestErrorLike;
     if (e.code === "23505") return { ok: true, duplicate: true };
@@ -61,8 +61,6 @@ export async function claimPendingEmails(limit = 25): Promise<OutboxRow[]> {
   const admin = supabaseAdmin();
   const nowIso = new Date().toISOString();
 
-  // Simple approach: just fetch pending due items.
-  // In production, you might add a "processing" state, but for launch this is OK.
   const { data, error } = await admin
     .from("email_outbox")
     .select(
@@ -115,7 +113,6 @@ export async function markEmailFailed(id: string, errorMsg: string) {
       status: attempts >= 5 ? "failed" : "pending",
       attempt_count: attempts,
       last_error: errorMsg.slice(0, 2000),
-      // backoff: 5 min * attempts
       run_after: new Date(Date.now() + attempts * 5 * 60 * 1000).toISOString(),
     })
     .eq("id", id);

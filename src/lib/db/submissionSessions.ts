@@ -15,6 +15,66 @@ function uniqStrings(xs: string[]) {
   return Array.from(new Set(xs.map((s) => s.trim()).filter(Boolean)));
 }
 
+type ClientDueRow = {
+  id: string;
+  due_day_of_month: number | null;
+};
+
+type ExistingOpenSessionRow = {
+  id: string;
+  status: "OPEN";
+  public_token: string;
+  opened_at: string | null;
+  due_on: string | null;
+};
+
+function partsInTimeZone(timeZone: string) {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(now)
+    .reduce<Record<string, string>>((acc, p) => {
+      if (p.type !== "literal") acc[p.type] = p.value;
+      return acc;
+    }, {});
+
+  return {
+    year: Number(parts.year),
+    month1to12: Number(parts.month),
+    day: Number(parts.day),
+  };
+}
+
+function lastDayOfMonthUtc(y: number, m1: number) {
+  return new Date(Date.UTC(y, m1, 0)).getUTCDate();
+}
+
+function makeUtcDate(y: number, m1: number, d: number) {
+  const last = lastDayOfMonthUtc(y, m1);
+  const clamped = Math.min(Math.max(1, d), last);
+  return new Date(Date.UTC(y, m1 - 1, clamped, 0, 0, 0));
+}
+
+function nextDueDateIso(dueDay: number, timeZone = "Africa/Johannesburg") {
+  const { year, month1to12, day } = partsInTimeZone(timeZone);
+
+  const today = makeUtcDate(year, month1to12, day);
+  const candidate = makeUtcDate(year, month1to12, dueDay);
+
+  let due = candidate;
+  if (candidate.getTime() < today.getTime()) {
+    const nextMonth = month1to12 === 12 ? 1 : month1to12 + 1;
+    const nextYear = month1to12 === 12 ? year + 1 : year;
+    due = makeUtcDate(nextYear, nextMonth, dueDay);
+  }
+
+  return due.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
 export async function createSubmissionSessionForClient(input: {
   clientId: string;
   documentRequestIds: string[];
@@ -29,18 +89,38 @@ export async function createSubmissionSessionForClient(input: {
 
   const { supabase, user } = await requireUser();
 
-  // 1) Ensure client belongs to user
+  // 1) Ensure client belongs to user + get due_day_of_month
   const { data: client, error: cErr } = await supabase
     .from("clients")
-    .select("id")
+    .select("id,due_day_of_month")
     .eq("id", input.clientId)
     .eq("user_id", user.id)
-    .single();
+    .single<ClientDueRow>();
 
   if (cErr) throw cErr;
   if (!client) throw new Error("Client not found");
 
-  // 2) Ensure all selected document requests belong to this client + user and are active
+  // 2) Block creation if there is already an OPEN session for this client.
+  // Sessions must be closed by FINALIZED (all uploads completed) or EXPIRED (due date reached).
+  const { data: existingOpen, error: openErr } = await supabase
+    .from("submission_sessions")
+    .select("id,status,public_token,opened_at,due_on")
+    .eq("user_id", user.id)
+    .eq("client_id", input.clientId)
+    .eq("status", "OPEN")
+    .maybeSingle<ExistingOpenSessionRow>();
+
+  if (openErr) throw openErr;
+  if (existingOpen) {
+    throw new Error(
+      "This client already has an open document request. Please complete it (or let it expire) before creating a new one."
+    );
+  }
+
+  const dueDay = Number(client.due_day_of_month ?? 25);
+  const due_on = nextDueDateIso(dueDay, "Africa/Johannesburg");
+
+  // 3) Ensure all selected document requests belong to this client + user and are active
   const { data: docs, error: dErr } = await supabase
     .from("document_requests")
     .select("id")
@@ -57,23 +137,8 @@ export async function createSubmissionSessionForClient(input: {
     throw new Error("One or more selected documents are invalid or inactive");
   }
 
-  // 3) ✅ Best-practice: expire any existing OPEN session for this (user, client)
-  // This avoids 23505 from submission_sessions_one_open_per_client and ensures old links stop working.
-  const nowIso = new Date().toISOString();
-  const { error: closeErr } = await supabase
-    .from("submission_sessions")
-    .update({
-      status: "EXPIRED",
-      expires_at: nowIso,
-      updated_at: nowIso,
-    })
-    .eq("user_id", user.id)
-    .eq("client_id", input.clientId)
-    .eq("status", "OPEN");
-
-  if (closeErr) throw closeErr;
-
   // 4) Create the new OPEN session
+  const nowIso = new Date().toISOString();
   const { data: session, error: sErr } = await supabase
     .from("submission_sessions")
     .insert({
@@ -81,6 +146,7 @@ export async function createSubmissionSessionForClient(input: {
       client_id: input.clientId,
       status: "OPEN",
       opened_at: nowIso,
+      due_on,
     })
     .select("id,public_token,status,opened_at")
     .single();
