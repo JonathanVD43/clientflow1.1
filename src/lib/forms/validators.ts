@@ -1,11 +1,4 @@
-// src/lib/forms/validators.ts
-import {
-  checkbox,
-  optionalString,
-  requireIntInRange,
-  requireString,
-  validateTimeZone,
-} from "./fields";
+import { checkbox, optionalString, requireIntInRange, requireString } from "./fields";
 
 export function extractClientCore(formData: FormData) {
   return {
@@ -36,25 +29,16 @@ export function extractClientUpdate(formData: FormData) {
 }
 
 export function extractDueSettings(formData: FormData) {
+  // Launch rule: 15..28 only (avoids cross-month reminder logic)
   const due_day_of_month = requireIntInRange(
     formData,
     "due_day_of_month",
-    1,
-    31,
-    "Due day of month must be 1..31"
+    15,
+    28,
+    "Due day of month must be 15..28"
   );
 
-  const tzSelect = optionalString(formData, "due_timezone_select");
-  const tzManual = optionalString(formData, "due_timezone_manual");
-  const tzRaw = tzSelect === "__manual__" ? tzManual : tzSelect;
-
-  const due_timezone = (tzRaw || "Africa/Johannesburg").trim();
-  validateTimeZone(
-    due_timezone,
-    `Invalid timezone: "${due_timezone}". Use an IANA timezone like Africa/Johannesburg.`
-  );
-
-  return { due_day_of_month, due_timezone };
+  return { due_day_of_month };
 }
 
 export function extractDocumentRequestCreate(formData: FormData) {
@@ -70,5 +54,6 @@ export function extractDocumentRequestUpdate(formData: FormData) {
     description: optionalString(formData, "description"),
     required: checkbox(formData, "required"),
     active: checkbox(formData, "active"),
+    recurring: checkbox(formData, "recurring"),
   };
 }

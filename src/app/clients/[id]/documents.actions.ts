@@ -31,7 +31,7 @@ export async function updateDocumentRequestAction(
   docId: string,
   formData: FormData
 ) {
-  const { title, description, required, active } =
+  const { title, description, required, active, recurring } =
     extractDocumentRequestUpdate(formData);
 
   await updateDocumentRequest({
@@ -40,6 +40,7 @@ export async function updateDocumentRequestAction(
     description,
     required,
     active,
+    recurring,
   });
 
   redirectWithSuccess(`/clients/${clientId}`, "doc_updated");

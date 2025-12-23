@@ -15,9 +15,9 @@ function fmt(ts: string | null) {
   return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
 }
 
-function expiresInLabel(expiresAt: string | null) {
-  if (!expiresAt) return "—";
-  const ms = new Date(expiresAt).getTime() - Date.now();
+function expiresInLabel(deleteAfter: string | null) {
+  if (!deleteAfter) return "—";
+  const ms = new Date(deleteAfter).getTime() - Date.now();
   if (!Number.isFinite(ms)) return "—";
   if (ms <= 0) return "expired";
 
@@ -37,8 +37,6 @@ export default async function InboxClientPage({
   searchParams?: Promise<{ view?: string }>;
 }) {
   const { clientId } = await params;
-  const sp = (await searchParams) ?? {};
-  const view = sp.view === "approved" ? "approved" : "pending";
 
   try {
     assertUuid("clientId", clientId);
@@ -56,6 +54,10 @@ export default async function InboxClientPage({
       </main>
     );
   }
+
+  const sp = (await searchParams) ?? {};
+  const view = (sp.view ?? "pending").toLowerCase();
+  const showApproved = view === "approved";
 
   // Get client header info (name/email) for nice UX
   const { supabase, user } = await requireUser();
@@ -80,11 +82,13 @@ export default async function InboxClientPage({
     );
   }
 
-  const pendingSessions: ClientReviewSessionRow[] =
-    view === "pending" ? await listReviewSessionsForClient(clientId) : [];
+  const pendingSessions: ClientReviewSessionRow[] = showApproved
+    ? []
+    : await listReviewSessionsForClient(clientId);
 
-  const approvedSessions: ClientApprovedSessionRow[] =
-    view === "approved" ? await listApprovedSessionsForClient(clientId) : [];
+  const approvedSessions: ClientApprovedSessionRow[] = showApproved
+    ? await listApprovedSessionsForClient(clientId)
+    : [];
 
   return (
     <main className="p-6 max-w-2xl space-y-4">
@@ -110,19 +114,17 @@ export default async function InboxClientPage({
           </Link>
         </div>
 
-        <div className="flex gap-3 text-sm pt-3">
+        {/* Simple “filter” toggle */}
+        <div className="flex gap-3 text-sm pt-2">
           <Link
-            className={view === "pending" ? "underline font-medium" : "underline"}
-            href={`/inbox/client/${clientId}`}
+            className={`underline ${!showApproved ? "font-medium" : ""}`}
+            href={`/inbox/client/${clientId}?view=pending`}
             prefetch={false}
           >
             Pending
           </Link>
-
           <Link
-            className={
-              view === "approved" ? "underline font-medium" : "underline"
-            }
+            className={`underline ${showApproved ? "font-medium" : ""}`}
             href={`/inbox/client/${clientId}?view=approved`}
             prefetch={false}
           >
@@ -131,22 +133,20 @@ export default async function InboxClientPage({
         </div>
       </div>
 
-      {view === "pending" ? (
+      {/* Pending view */}
+      {!showApproved ? (
         pendingSessions.length === 0 ? (
           <div className="opacity-70">
             No sessions currently have pending uploads for review.
           </div>
         ) : (
           <ul className="space-y-2">
-            {pendingSessions.map((s) => {
+            {pendingSessions.map((s: ClientReviewSessionRow) => {
               const href = `/inbox/${s.session_id}`;
               const hasNew = Number(s.pending_new ?? 0) > 0;
 
               return (
-                <li
-                  key={`pending-${s.session_id}`}
-                  className="border rounded-xl p-4"
-                >
+                <li key={`pending-${s.session_id}`} className="border rounded-xl p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 space-y-1">
                       <div className="font-medium truncate flex items-center gap-2">
@@ -164,9 +164,7 @@ export default async function InboxClientPage({
 
                       <div className="text-sm opacity-70">
                         Pending: {s.pending_total ?? 0}
-                        <span className="ml-2">
-                          · Session status: {s.status}
-                        </span>
+                        <span className="ml-2">· Session status: {s.status}</span>
                       </div>
 
                       <div className="text-xs opacity-60">
@@ -175,11 +173,7 @@ export default async function InboxClientPage({
                       </div>
                     </div>
 
-                    <Link
-                      className="underline shrink-0"
-                      href={href}
-                      prefetch={false}
-                    >
+                    <Link className="underline shrink-0" href={href} prefetch={false}>
                       Open
                     </Link>
                   </div>
@@ -188,55 +182,51 @@ export default async function InboxClientPage({
             })}
           </ul>
         )
-      ) : approvedSessions.length === 0 ? (
-        <div className="opacity-70">
-          No completed sessions with approved files are currently available.
-        </div>
-      ) : (
-        <ul className="space-y-2">
-          {approvedSessions.map((s) => {
-            const href = `/inbox/${s.session_id}`;
+      ) : null}
 
-            return (
-              <li
-                key={`approved-${s.session_id}`}
-                className="border rounded-xl p-4"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 space-y-1">
-                    <div className="font-medium truncate flex items-center gap-2">
-                      <span className="truncate">Session</span>
-                      <span className="text-xs font-mono opacity-60 truncate">
-                        {s.session_id}
-                      </span>
+      {/* Approved view */}
+      {showApproved ? (
+        approvedSessions.length === 0 ? (
+          <div className="opacity-70">
+            No approved sessions currently have downloadable files within the 72h window.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {approvedSessions.map((s: ClientApprovedSessionRow) => {
+              const href = `/inbox/${s.session_id}`;
+
+              return (
+                <li key={`approved-${s.session_id}`} className="border rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 space-y-1">
+                      <div className="font-medium truncate flex items-center gap-2">
+                        <span className="truncate">Session</span>
+                        <span className="text-xs font-mono opacity-60 truncate">
+                          {s.session_id}
+                        </span>
+                      </div>
+
+                      <div className="text-sm opacity-70">
+                        Approved files: {s.accepted_total ?? 0}
+                        <span className="ml-2">· Session status: {s.status}</span>
+                      </div>
+
+                      <div className="text-xs opacity-60">
+                        Last approved: {fmt(s.last_reviewed_at)} ·{" "}
+                        {s.expires_at ? expiresInLabel(s.expires_at) : "—"}
+                      </div>
                     </div>
 
-                    <div className="text-sm opacity-70">
-                      Approved: {s.accepted_total ?? 0}
-                      <span className="ml-2">
-                        · Session status: {s.status}
-                      </span>
-                    </div>
-
-                    <div className="text-xs opacity-60">
-                      Last approved: {fmt(s.last_reviewed_at)} ·{" "}
-                      {expiresInLabel(s.expires_at)}
-                    </div>
+                    <Link className="underline shrink-0" href={href} prefetch={false}>
+                      Open
+                    </Link>
                   </div>
-
-                  <Link
-                    className="underline shrink-0"
-                    href={href}
-                    prefetch={false}
-                  >
-                    Open
-                  </Link>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+                </li>
+              );
+            })}
+          </ul>
+        )
+      ) : null}
     </main>
   );
 }

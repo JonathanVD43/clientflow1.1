@@ -1,4 +1,3 @@
-// src/app/api/portal-session/[token]/uploads/[uploadId]/complete/route.ts
 import { type NextRequest } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { validateCSRF } from "@/lib/security/csrf";
@@ -50,7 +49,8 @@ export const POST = withLoggingRoute<RouteCtx>(
     const th = tokenHint(cleanToken);
 
     if (!cleanToken) return errorResponse("Missing token", 400);
-    if (!uploadId || !isValidUuid(uploadId)) return errorResponse("Invalid uploadId", 400);
+    if (!uploadId || !isValidUuid(uploadId))
+      return errorResponse("Invalid uploadId", 400);
 
     const supabase = supabaseAdmin();
 
@@ -63,7 +63,8 @@ export const POST = withLoggingRoute<RouteCtx>(
 
     if (sessErr) return errorResponse(sessErr.message, 500);
     if (!session) return errorResponse("Invalid token", 404);
-    if (session.status !== "OPEN") return errorResponse("This request is completed", 410);
+    if (session.status !== "OPEN")
+      return errorResponse("This request is completed", 410);
 
     // 2) Resolve upload and verify ownership/session
     const { data: upload, error: upErr } = await supabase
@@ -126,6 +127,46 @@ export const POST = withLoggingRoute<RouteCtx>(
         .eq("status", "OPEN");
 
       if (!finErr) finalized = true;
+    }
+
+    // 4b) If finalized just happened, enqueue internal email (toggleable)
+    if (finalized) {
+      const { data: settings, error: sErr } = await supabase
+        .from("user_settings")
+        .select("user_email,notify_on_session_finalized")
+        .eq("user_id", session.user_id)
+        .maybeSingle<{ user_email: string; notify_on_session_finalized: boolean }>();
+
+      if (!sErr && settings?.notify_on_session_finalized && settings.user_email) {
+        const { data: clientRow } = await supabase
+          .from("clients")
+          .select("name")
+          .eq("id", session.client_id)
+          .eq("user_id", session.user_id)
+          .maybeSingle<{ name: string | null }>();
+
+        const clientName = clientRow?.name ?? "(client)";
+        const baseUrl = process.env.APP_BASE_URL;
+        const link = baseUrl
+          ? `${baseUrl.replace(/\/+$/, "")}/inbox/${encodeURIComponent(session.id)}`
+          : "";
+
+        // Use admin to insert into outbox (service role)
+        // (service role bypasses RLS; safe here because it's server-side)
+        const idempotencyKey = `session_finalized_notify:${session.id}`;
+
+        await supabase.from("email_outbox").insert({
+          user_id: session.user_id,
+          client_id: session.client_id,
+          submission_session_id: session.id,
+          to_email: settings.user_email,
+          template: "session_finalized_notify",
+          payload: { clientName, sessionId: session.id, link },
+          idempotency_key: idempotencyKey,
+          status: "pending",
+          run_after: new Date().toISOString(),
+        });
+      }
     }
 
     await writeAuditEvent({

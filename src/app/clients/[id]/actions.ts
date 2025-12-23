@@ -1,4 +1,3 @@
-// src/app/clients/[id]/actions.ts
 "use server";
 
 import { updateClient, deleteClient } from "@/lib/db/clients";
@@ -30,8 +29,8 @@ export async function updateClientDueSettingsAction(
   formData: FormData
 ) {
   try {
-    const { due_day_of_month, due_timezone } = extractDueSettings(formData);
-    await updateClient(clientId, { due_day_of_month, due_timezone });
+    const { due_day_of_month } = extractDueSettings(formData);
+    await updateClient(clientId, { due_day_of_month });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not save due settings";
     redirectWithError(`/clients/${clientId}`, msg);

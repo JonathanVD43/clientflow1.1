@@ -289,7 +289,15 @@ export default async function InboxSessionPage({
       </div>
 
       {summary.denied.length > 0 ? (
-        <form action={requestReplacementsAction.bind(null, sessionId)}>
+        <form
+          action={requestReplacementsAction.bind(null, sessionId)}
+          className="space-y-2"
+        >
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="send_email_now" value="1" />
+            Send replacement link email to client now
+          </label>
+
           <button className="border rounded-lg px-4 py-2">
             Request replacements for denied files
           </button>
