@@ -16,12 +16,19 @@ type ClientRow = {
   email: string | null;
 };
 
+type CountHead = { count: number | null };
+
 function requireSecret(req: Request) {
   const url = new URL(req.url);
   const secret = url.searchParams.get("secret") ?? "";
   const expected = process.env.CRON_SECRET ?? "";
-  if (!expected || secret !== expected) return false;
-  return true;
+  return Boolean(expected) && secret === expected;
+}
+
+function isoDatePlusDays(days: number) {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
 }
 
 export async function POST(req: Request) {
@@ -39,10 +46,8 @@ export async function POST(req: Request) {
 
   const admin = supabaseAdmin();
 
-  // today + 14 days, as a DATE string in UTC (good enough since due_on is a DATE)
-  const target = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
+  // today + 14 days, as a DATE string in UTC (works with due_on DATE)
+  const target = isoDatePlusDays(14);
 
   // Find sessions due in 14 days that haven't been reminded
   const { data: sessions, error: sErr } = await admin
@@ -54,15 +59,12 @@ export async function POST(req: Request) {
     .returns<SessionDueRow[]>();
 
   if (sErr) {
-    return NextResponse.json(
-      { ok: false, error: sErr.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ ok: false, error: sErr.message }, { status: 500 });
   }
 
   const list = sessions ?? [];
   if (list.length === 0) {
-    return NextResponse.json({ ok: true, processed: 0 });
+    return NextResponse.json({ ok: true, processed: 0, target_due_on: target });
   }
 
   let enqueued = 0;
@@ -71,6 +73,32 @@ export async function POST(req: Request) {
 
   for (const s of list) {
     try {
+      // Skip if everything is already uploaded for this session:
+      // If there are ZERO "missing uploads" (uploads with uploaded_at IS NULL), then don't remind.
+      const { count: missingCount, error: missErr } = await admin
+        .from("uploads")
+        .select("id", { count: "exact", head: true })
+        .eq("submission_session_id", s.id)
+        .is("deleted_at", null)
+        .is("uploaded_at", null)
+        .returns<CountHead>();
+
+      if (missErr) throw new Error(missErr.message);
+
+      const missing = Number(missingCount ?? 0);
+      if (missing === 0) {
+        // Nothing outstanding -> stamp to avoid retry spam
+        const { error: updSkipErr } = await admin
+          .from("submission_sessions")
+          .update({ reminder_14d_sent_at: new Date().toISOString() })
+          .eq("id", s.id);
+
+        if (updSkipErr) throw new Error(updSkipErr.message);
+
+        skipped += 1;
+        continue;
+      }
+
       // Load client email + name
       const { data: client, error: cErr } = await admin
         .from("clients")
@@ -84,10 +112,13 @@ export async function POST(req: Request) {
       const toEmail = (client?.email ?? "").trim();
       if (!toEmail) {
         // no email => mark as "sent" to avoid retry spam, but count as skipped
-        await admin
+        const { error: updNoEmailErr } = await admin
           .from("submission_sessions")
           .update({ reminder_14d_sent_at: new Date().toISOString() })
           .eq("id", s.id);
+
+        if (updNoEmailErr) throw new Error(updNoEmailErr.message);
+
         skipped += 1;
         continue;
       }
@@ -116,10 +147,8 @@ export async function POST(req: Request) {
       });
 
       if (insErr) {
-        // 23505 = duplicate (already enqueued) -> treat as success
-        if ((insErr as unknown as { code?: string | null }).code !== "23505") {
-          throw new Error(insErr.message);
-        }
+        const code = (insErr as unknown as { code?: string | null }).code ?? null;
+        if (code !== "23505") throw new Error(insErr.message);
       }
 
       // Stamp reminder sent (so only once per session)

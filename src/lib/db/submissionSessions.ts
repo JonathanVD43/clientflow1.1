@@ -20,34 +20,9 @@ type ClientDueRow = {
   due_day_of_month: number | null;
 };
 
-type ExistingOpenSessionRow = {
+type ExistingOpenTemplateSessionRow = {
   id: string;
-  status: "OPEN";
-  public_token: string;
-  opened_at: string | null;
-  due_on: string | null;
 };
-
-function partsInTimeZone(timeZone: string) {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  })
-    .formatToParts(now)
-    .reduce<Record<string, string>>((acc, p) => {
-      if (p.type !== "literal") acc[p.type] = p.value;
-      return acc;
-    }, {});
-
-  return {
-    year: Number(parts.year),
-    month1to12: Number(parts.month),
-    day: Number(parts.day),
-  };
-}
 
 function lastDayOfMonthUtc(y: number, m1: number) {
   return new Date(Date.UTC(y, m1, 0)).getUTCDate();
@@ -59,33 +34,65 @@ function makeUtcDate(y: number, m1: number, d: number) {
   return new Date(Date.UTC(y, m1 - 1, clamped, 0, 0, 0));
 }
 
-function nextDueDateIso(dueDay: number, timeZone = "Africa/Johannesburg") {
-  const { year, month1to12, day } = partsInTimeZone(timeZone);
-
-  const today = makeUtcDate(year, month1to12, day);
-  const candidate = makeUtcDate(year, month1to12, dueDay);
+/**
+ * Compute the next due date as YYYY-MM-DD.
+ * If today is already past dueDay, rolls to next month.
+ * Uses UTC calendar math (good enough since due_on is a DATE).
+ */
+function nextDueDateIso(dueDay: number) {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m1 = now.getUTCMonth() + 1;
+  const today = makeUtcDate(y, m1, now.getUTCDate());
+  const candidate = makeUtcDate(y, m1, dueDay);
 
   let due = candidate;
   if (candidate.getTime() < today.getTime()) {
-    const nextMonth = month1to12 === 12 ? 1 : month1to12 + 1;
-    const nextYear = month1to12 === 12 ? year + 1 : year;
+    const nextMonth = m1 === 12 ? 1 : m1 + 1;
+    const nextYear = m1 === 12 ? y + 1 : y;
     due = makeUtcDate(nextYear, nextMonth, dueDay);
   }
 
-  return due.toISOString().slice(0, 10); // YYYY-MM-DD
+  return due.toISOString().slice(0, 10);
 }
 
-export async function createSubmissionSessionForClient(input: {
+type CreateSessionInput = {
   clientId: string;
   documentRequestIds: string[];
-}): Promise<CreatedSubmissionSession> {
+
+  /**
+   * If provided, this session is considered template-backed.
+   * We enforce "only one OPEN per (client, template)" in code
+   * (and SQL unique index enforces it too).
+   */
+  requestTemplateId?: string | null;
+
+  /**
+   * For analytics/filters. DB default is 'manual'.
+   */
+  sentVia?: "manual" | "auto";
+
+  /**
+   * If you want to stamp when the request email was actually sent.
+   * Leave null if you're creating the session before sending.
+   */
+  requestSentAtIso?: string | null;
+};
+
+export async function createSubmissionSessionForClient(
+  input: CreateSessionInput
+): Promise<CreatedSubmissionSession> {
   assertUuid("clientId", input.clientId);
 
   const ids = uniqStrings(input.documentRequestIds);
-  if (ids.length === 0) {
-    throw new Error("Select at least one document to request");
-  }
+  if (ids.length === 0) throw new Error("Select at least one document to request");
   for (const id of ids) assertUuid("documentRequestId", id);
+
+  const requestTemplateId = (input.requestTemplateId ?? null) ? String(input.requestTemplateId) : null;
+  if (requestTemplateId) assertUuid("requestTemplateId", requestTemplateId);
+
+  const sentVia: "manual" | "auto" = input.sentVia ?? "manual";
+  const requestSentAt = input.requestSentAtIso ?? null;
 
   const { supabase, user } = await requireUser();
 
@@ -100,25 +107,28 @@ export async function createSubmissionSessionForClient(input: {
   if (cErr) throw cErr;
   if (!client) throw new Error("Client not found");
 
-  // 2) Block creation if there is already an OPEN session for this client.
-  // Sessions must be closed by FINALIZED (all uploads completed) or EXPIRED (due date reached).
-  const { data: existingOpen, error: openErr } = await supabase
-    .from("submission_sessions")
-    .select("id,status,public_token,opened_at,due_on")
-    .eq("user_id", user.id)
-    .eq("client_id", input.clientId)
-    .eq("status", "OPEN")
-    .maybeSingle<ExistingOpenSessionRow>();
+  // 2) Allow concurrent sessions per client.
+  //    BUT if it's template-backed, enforce only one OPEN session per template for this client.
+  if (requestTemplateId) {
+    const { data: existingOpen, error: openErr } = await supabase
+      .from("submission_sessions")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("client_id", input.clientId)
+      .eq("status", "OPEN")
+      .eq("request_template_id", requestTemplateId)
+      .maybeSingle<ExistingOpenTemplateSessionRow>();
 
-  if (openErr) throw openErr;
-  if (existingOpen) {
-    throw new Error(
-      "This client already has an open document request. Please complete it (or let it expire) before creating a new one."
-    );
+    if (openErr) throw openErr;
+    if (existingOpen) {
+      throw new Error(
+        "This request template already has an open session for this client. Please complete it (or let it expire) before creating another."
+      );
+    }
   }
 
   const dueDay = Number(client.due_day_of_month ?? 25);
-  const due_on = nextDueDateIso(dueDay, "Africa/Johannesburg");
+  const due_on = nextDueDateIso(dueDay);
 
   // 3) Ensure all selected document requests belong to this client + user and are active
   const { data: docs, error: dErr } = await supabase
@@ -139,6 +149,7 @@ export async function createSubmissionSessionForClient(input: {
 
   // 4) Create the new OPEN session
   const nowIso = new Date().toISOString();
+
   const { data: session, error: sErr } = await supabase
     .from("submission_sessions")
     .insert({
@@ -147,9 +158,13 @@ export async function createSubmissionSessionForClient(input: {
       status: "OPEN",
       opened_at: nowIso,
       due_on,
+      request_template_id: requestTemplateId,
+      sent_via: sentVia,
+      request_sent_at: requestSentAt,
+      // keep defaults: kind defaults to MANUAL in SQL
     })
     .select("id,public_token,status,opened_at")
-    .single();
+    .single<{ id: string; public_token: string; status: string; opened_at: string | null }>();
 
   if (sErr) throw sErr;
 
