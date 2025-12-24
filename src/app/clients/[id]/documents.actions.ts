@@ -1,3 +1,4 @@
+// src/app/clients/[id]/documents.actions.ts
 "use server";
 
 import {
@@ -11,10 +12,17 @@ import {
 } from "@/lib/forms/validators";
 import { redirectWithSuccess } from "@/lib/navigation/redirects";
 
-export async function addDocumentRequestAction(
-  clientId: string,
-  formData: FormData
-) {
+function qs(formData: FormData, keys: string[]) {
+  const sp = new URLSearchParams();
+  for (const k of keys) {
+    const v = formData.get(k);
+    if (typeof v === "string" && v.trim()) sp.set(k, v.trim());
+  }
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
+export async function addDocumentRequestAction(clientId: string, formData: FormData) {
   const { title, description } = extractDocumentRequestCreate(formData);
 
   await createDocumentRequest({
@@ -23,7 +31,7 @@ export async function addDocumentRequestAction(
     description,
   });
 
-  redirectWithSuccess(`/clients/${clientId}`, "doc_added");
+  redirectWithSuccess(`/clients/${clientId}${qs(formData, ["lib", "edit"])}`, "doc_added");
 }
 
 export async function updateDocumentRequestAction(
@@ -43,13 +51,22 @@ export async function updateDocumentRequestAction(
     recurring,
   });
 
-  redirectWithSuccess(`/clients/${clientId}`, "doc_updated");
+  // keep selection
+  redirectWithSuccess(
+    `/clients/${clientId}${qs(formData, ["lib", "edit", "docId"])}`,
+    "doc_updated"
+  );
 }
 
 export async function deleteDocumentRequestAction(
   clientId: string,
-  docId: string
+  docId: string,
+  formData?: FormData
 ) {
   await deleteDocumentRequest(docId);
-  redirectWithSuccess(`/clients/${clientId}`, "doc_deleted");
+
+  const suffix =
+    formData ? qs(formData, ["lib", "edit"]) : "";
+
+  redirectWithSuccess(`/clients/${clientId}${suffix}`, "doc_deleted");
 }

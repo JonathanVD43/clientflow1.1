@@ -10,6 +10,10 @@ type TemplateRow = {
   enabled: boolean;
   silent_auto_send: boolean;
   start_next_month: boolean;
+  created_at: string;
+
+  // ✅ NEW
+  due_day_of_month: number | null;
 };
 
 type ClientRow = {
@@ -17,24 +21,21 @@ type ClientRow = {
   user_id: string;
   name: string | null;
   email: string | null;
-  due_day_of_month: number | null;
   active: boolean;
   portal_enabled: boolean;
 };
 
 type TemplateDocRow = { document_request_id: string };
-
 type OpenSessionRow = { id: string };
-
 type CreatedSessionRow = { id: string; public_token: string };
 
-function requireCronSecret(req: Request): string | Response {
+function requireCronSecret(req: Request): Response | null {
   const url = new URL(req.url);
   const secret = url.searchParams.get("secret") ?? "";
   const expected = process.env.CRON_SECRET ?? "";
   if (!expected) return NextResponse.json({ error: "Missing CRON_SECRET" }, { status: 500 });
   if (secret !== expected) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  return secret;
+  return null;
 }
 
 // YYYY-MM-DD override for local testing: ?today=2026-01-01
@@ -46,7 +47,6 @@ function getTodayParts(req: Request) {
     return { year: y, month1to12: m, day: d };
   }
 
-  // default: Africa/Johannesburg day/month/year
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Africa/Johannesburg",
@@ -77,8 +77,17 @@ function makeUtcDate(y: number, m1: number, d: number) {
   return new Date(Date.UTC(y, m1 - 1, clamped, 0, 0, 0));
 }
 
-function nextDueOnForClient(dueDay: number | null, today: { year: number; month1to12: number; day: number }) {
-  const dd = Number(dueDay ?? 25);
+function normalizeDueDay(dueDayRaw: unknown, fallback = 25) {
+  const n = typeof dueDayRaw === "number" ? dueDayRaw : Number(dueDayRaw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(1, Math.trunc(n)), 31);
+}
+
+function nextDueOnForSession(
+  dueDay: number | null,
+  today: { year: number; month1to12: number; day: number }
+) {
+  const dd = normalizeDueDay(dueDay ?? 25, 25);
 
   const todayUtc = makeUtcDate(today.year, today.month1to12, today.day);
   const candidate = makeUtcDate(today.year, today.month1to12, dd);
@@ -92,13 +101,22 @@ function nextDueOnForClient(dueDay: number | null, today: { year: number; month1
   return due.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+function isSameMonthOrLater(templateCreatedAtIso: string, today: { year: number; month1to12: number }) {
+  const d = new Date(templateCreatedAtIso);
+  const y = d.getUTCFullYear();
+  const m1 = d.getUTCMonth() + 1;
+  if (today.year > y) return true;
+  if (today.year < y) return false;
+  return today.month1to12 >= m1;
+}
+
 export async function POST(req: Request) {
   const gate = requireCronSecret(req);
-  if (gate instanceof Response) return gate;
+  if (gate) return gate;
 
   const admin = supabaseAdmin();
-
   const today = getTodayParts(req);
+
   if (today.day !== 1) {
     return NextResponse.json({ ok: true, skipped: true, reason: "Not the 1st" });
   }
@@ -106,15 +124,13 @@ export async function POST(req: Request) {
   const nowIso = new Date().toISOString();
 
   const baseUrl = process.env.APP_BASE_URL ?? "";
-  if (!baseUrl) {
-    return NextResponse.json({ error: "Missing APP_BASE_URL" }, { status: 500 });
-  }
+  if (!baseUrl) return NextResponse.json({ error: "Missing APP_BASE_URL" }, { status: 500 });
   const appBase = baseUrl.replace(/\/+$/, "");
 
   // 1) Load enabled templates (monthly only)
   const { data: templates, error: tErr } = await admin
     .from("request_templates")
-    .select("id,user_id,client_id,name,enabled,silent_auto_send,start_next_month")
+    .select("id,user_id,client_id,name,enabled,silent_auto_send,start_next_month,created_at,due_day_of_month")
     .eq("enabled", true)
     .returns<TemplateRow[]>();
 
@@ -126,10 +142,15 @@ export async function POST(req: Request) {
   let skippedCount = 0;
 
   for (const tpl of tplList) {
+    if (!isSameMonthOrLater(tpl.created_at, { year: today.year, month1to12: today.month1to12 })) {
+      skippedCount += 1;
+      continue;
+    }
+
     // 2) Load client for this template
     const { data: client, error: cErr } = await admin
       .from("clients")
-      .select("id,user_id,name,email,due_day_of_month,active,portal_enabled")
+      .select("id,user_id,name,email,active,portal_enabled")
       .eq("id", tpl.client_id)
       .eq("user_id", tpl.user_id)
       .maybeSingle<ClientRow>();
@@ -138,7 +159,6 @@ export async function POST(req: Request) {
       skippedCount += 1;
       continue;
     }
-
     if (!client.active || !client.portal_enabled) {
       skippedCount += 1;
       continue;
@@ -182,7 +202,8 @@ export async function POST(req: Request) {
       continue;
     }
 
-    const due_on = nextDueOnForClient(client.due_day_of_month, today);
+    // ✅ due_on derived from TEMPLATE due day (session-specific)
+    const due_on = nextDueOnForSession(tpl.due_day_of_month ?? 25, today);
 
     // 5) Create session (AUTO)
     const { data: session, error: sErr } = await admin
@@ -220,7 +241,6 @@ export async function POST(req: Request) {
       .insert(joinRows);
 
     if (jErr) {
-      // If join fails, expire this session so it doesn't stay OPEN half-baked
       await admin
         .from("submission_sessions")
         .update({ status: "EXPIRED", expires_at: nowIso, updated_at: nowIso })
@@ -230,19 +250,18 @@ export async function POST(req: Request) {
     }
 
     // 7) Auto enqueue email if client has email
-    if (client.email && client.email.trim()) {
+    const toEmail = (client.email ?? "").trim();
+    if (toEmail) {
       const link = `${appBase}/portal/${encodeURIComponent(session.public_token)}`;
 
-      const idempotencyKey = `auto_request_link:${tpl.id}:${today.year}-${String(today.month1to12).padStart(
-        2,
-        "0"
-      )}-${String(today.day).padStart(2, "0")}`;
+      const periodKey = `${today.year}-${String(today.month1to12).padStart(2, "0")}`;
+      const idempotencyKey = `auto_request_link:${tpl.id}:${periodKey}`;
 
       const { error: eErr } = await admin.from("email_outbox").insert({
         user_id: tpl.user_id,
         client_id: tpl.client_id,
         submission_session_id: session.id,
-        to_email: client.email.trim(),
+        to_email: toEmail,
         template: "manual_request_link",
         payload: {
           clientName: client.name ?? "(client)",
@@ -255,7 +274,6 @@ export async function POST(req: Request) {
         status: "pending",
       });
 
-      // If unique violation, it's fine (idempotent).
       if (!eErr) enqueuedCount += 1;
     }
   }

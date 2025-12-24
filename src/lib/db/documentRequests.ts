@@ -3,6 +3,8 @@ import { requireUser } from "@/lib/auth/require-user";
 import { assertUuid } from "@/lib/validation/uuid";
 import { expectSingleId } from "@/lib/db/query-builder";
 
+type IdRow = { id: string };
+
 export async function listDocumentRequests(clientId: string) {
   assertUuid("clientId", clientId);
 
@@ -10,9 +12,8 @@ export async function listDocumentRequests(clientId: string) {
 
   const { data, error } = await supabase
     .from("document_requests")
-    // ✅ document_requests uses created_at/updated_at (NOT uploaded_at)
     .select(
-      "id,title,description,required,active,sort_order,created_at,updated_at,max_files,allowed_mime_types"
+      "id,title,description,required,active,recurring,sort_order,created_at,updated_at,max_files,allowed_mime_types"
     )
     .eq("client_id", clientId)
     .eq("user_id", user.id)
@@ -45,12 +46,13 @@ export async function createDocumentRequest(input: {
         description: input.description ?? null,
         required: true,
         active: true,
+        recurring: false,
         max_files: 1,
         sort_order: 0,
         allowed_mime_types: null,
       })
       .select("id")
-      .single(),
+      .single<IdRow>(),
     "Insert succeeded but no id returned"
   );
 }
@@ -61,6 +63,7 @@ export async function updateDocumentRequest(input: {
   description?: string | null;
   required?: boolean;
   active?: boolean;
+  recurring?: boolean;
 }) {
   assertUuid("id", input.id);
 
@@ -71,6 +74,7 @@ export async function updateDocumentRequest(input: {
   if ("description" in input) patch.description = input.description ?? null;
   if (typeof input.required === "boolean") patch.required = input.required;
   if (typeof input.active === "boolean") patch.active = input.active;
+  if (typeof input.recurring === "boolean") patch.recurring = input.recurring;
 
   return expectSingleId(
     supabase
@@ -79,7 +83,7 @@ export async function updateDocumentRequest(input: {
       .eq("id", input.id)
       .eq("user_id", user.id)
       .select("id")
-      .single(),
+      .single<IdRow>(),
     "Update succeeded but no row returned"
   );
 }

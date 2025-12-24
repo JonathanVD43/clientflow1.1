@@ -15,14 +15,30 @@ function uniqStrings(xs: string[]) {
   return Array.from(new Set(xs.map((s) => s.trim()).filter(Boolean)));
 }
 
-type ClientDueRow = {
+type ClientRow = {
   id: string;
-  due_day_of_month: number | null;
 };
 
-type ExistingOpenTemplateSessionRow = {
-  id: string;
-};
+function partsInTimeZone(timeZone: string) {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .formatToParts(now)
+    .reduce<Record<string, string>>((acc, p) => {
+      if (p.type !== "literal") acc[p.type] = p.value;
+      return acc;
+    }, {});
+
+  return {
+    year: Number(parts.year),
+    month1to12: Number(parts.month),
+    day: Number(parts.day),
+  };
+}
 
 function lastDayOfMonthUtc(y: number, m1: number) {
   return new Date(Date.UTC(y, m1, 0)).getUTCDate();
@@ -34,103 +50,65 @@ function makeUtcDate(y: number, m1: number, d: number) {
   return new Date(Date.UTC(y, m1 - 1, clamped, 0, 0, 0));
 }
 
-/**
- * Compute the next due date as YYYY-MM-DD.
- * If today is already past dueDay, rolls to next month.
- * Uses UTC calendar math (good enough since due_on is a DATE).
- */
-function nextDueDateIso(dueDay: number) {
-  const now = new Date();
-  const y = now.getUTCFullYear();
-  const m1 = now.getUTCMonth() + 1;
-  const today = makeUtcDate(y, m1, now.getUTCDate());
-  const candidate = makeUtcDate(y, m1, dueDay);
+function normalizeDueDay(dueDayRaw: unknown, fallback = 25) {
+  const n = typeof dueDayRaw === "number" ? dueDayRaw : Number(dueDayRaw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(1, Math.trunc(n)), 31);
+}
+
+function nextDueDateIso(dueDay: number, timeZone = "Africa/Johannesburg") {
+  const { year, month1to12, day } = partsInTimeZone(timeZone);
+
+  const today = makeUtcDate(year, month1to12, day);
+  const candidate = makeUtcDate(year, month1to12, dueDay);
 
   let due = candidate;
   if (candidate.getTime() < today.getTime()) {
-    const nextMonth = m1 === 12 ? 1 : m1 + 1;
-    const nextYear = m1 === 12 ? y + 1 : y;
+    const nextMonth = month1to12 === 12 ? 1 : month1to12 + 1;
+    const nextYear = month1to12 === 12 ? year + 1 : year;
     due = makeUtcDate(nextYear, nextMonth, dueDay);
   }
 
-  return due.toISOString().slice(0, 10);
+  return due.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-type CreateSessionInput = {
+export async function createSubmissionSessionForClient(input: {
   clientId: string;
   documentRequestIds: string[];
 
-  /**
-   * If provided, this session is considered template-backed.
-   * We enforce "only one OPEN per (client, template)" in code
-   * (and SQL unique index enforces it too).
-   */
+  // Optional: if created from a recurring template
   requestTemplateId?: string | null;
 
-  /**
-   * For analytics/filters. DB default is 'manual'.
-   */
+  // Optional: metadata for auditing / cron-created sessions
   sentVia?: "manual" | "auto";
-
-  /**
-   * If you want to stamp when the request email was actually sent.
-   * Leave null if you're creating the session before sending.
-   */
   requestSentAtIso?: string | null;
-};
 
-export async function createSubmissionSessionForClient(
-  input: CreateSessionInput
-): Promise<CreatedSubmissionSession> {
+  // ✅ NEW: session-specific due settings
+  dueDayOfMonth?: number | null;
+  dueTimeZone?: string | null;
+}): Promise<CreatedSubmissionSession> {
   assertUuid("clientId", input.clientId);
 
   const ids = uniqStrings(input.documentRequestIds);
   if (ids.length === 0) throw new Error("Select at least one document to request");
   for (const id of ids) assertUuid("documentRequestId", id);
 
-  const requestTemplateId = (input.requestTemplateId ?? null) ? String(input.requestTemplateId) : null;
-  if (requestTemplateId) assertUuid("requestTemplateId", requestTemplateId);
-
-  const sentVia: "manual" | "auto" = input.sentVia ?? "manual";
-  const requestSentAt = input.requestSentAtIso ?? null;
+  if (input.requestTemplateId) assertUuid("requestTemplateId", input.requestTemplateId);
 
   const { supabase, user } = await requireUser();
 
-  // 1) Ensure client belongs to user + get due_day_of_month
+  // 1) Ensure client belongs to user
   const { data: client, error: cErr } = await supabase
     .from("clients")
-    .select("id,due_day_of_month")
+    .select("id")
     .eq("id", input.clientId)
     .eq("user_id", user.id)
-    .single<ClientDueRow>();
+    .single<ClientRow>();
 
   if (cErr) throw cErr;
   if (!client) throw new Error("Client not found");
 
-  // 2) Allow concurrent sessions per client.
-  //    BUT if it's template-backed, enforce only one OPEN session per template for this client.
-  if (requestTemplateId) {
-    const { data: existingOpen, error: openErr } = await supabase
-      .from("submission_sessions")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("client_id", input.clientId)
-      .eq("status", "OPEN")
-      .eq("request_template_id", requestTemplateId)
-      .maybeSingle<ExistingOpenTemplateSessionRow>();
-
-    if (openErr) throw openErr;
-    if (existingOpen) {
-      throw new Error(
-        "This request template already has an open session for this client. Please complete it (or let it expire) before creating another."
-      );
-    }
-  }
-
-  const dueDay = Number(client.due_day_of_month ?? 25);
-  const due_on = nextDueDateIso(dueDay);
-
-  // 3) Ensure all selected document requests belong to this client + user and are active
+  // 2) Ensure all selected document requests belong to this client + user and are active
   const { data: docs, error: dErr } = await supabase
     .from("document_requests")
     .select("id")
@@ -141,14 +119,19 @@ export async function createSubmissionSessionForClient(
 
   if (dErr) throw dErr;
 
-  const found = new Set((docs ?? []).map((d) => d.id));
+  const found = new Set((docs ?? []).map((d) => String((d as { id: unknown }).id)));
   const missing = ids.filter((id) => !found.has(id));
-  if (missing.length) {
-    throw new Error("One or more selected documents are invalid or inactive");
-  }
+  if (missing.length) throw new Error("One or more selected documents are invalid or inactive");
 
-  // 4) Create the new OPEN session
+  // 3) ✅ Compute due_on from provided dueDayOfMonth (session-specific)
+  const dueDay = normalizeDueDay(input.dueDayOfMonth ?? 25, 25);
+  const tz = (input.dueTimeZone ?? "Africa/Johannesburg").trim() || "Africa/Johannesburg";
+  const due_on = nextDueDateIso(dueDay, tz);
+
+  // 4) Create the new OPEN session (do NOT expire other sessions)
   const nowIso = new Date().toISOString();
+  const sentVia = input.sentVia ?? "manual";
+  const requestSentAt = input.requestSentAtIso ?? null;
 
   const { data: session, error: sErr } = await supabase
     .from("submission_sessions")
@@ -158,19 +141,15 @@ export async function createSubmissionSessionForClient(
       status: "OPEN",
       opened_at: nowIso,
       due_on,
-      request_template_id: requestTemplateId,
+      request_template_id: input.requestTemplateId ?? null,
       sent_via: sentVia,
       request_sent_at: requestSentAt,
-      // keep defaults: kind defaults to MANUAL in SQL
     })
     .select("id,public_token,status,opened_at")
     .single<{ id: string; public_token: string; status: string; opened_at: string | null }>();
 
   if (sErr) throw sErr;
-
-  if (!session?.id || !session?.public_token) {
-    throw new Error("Session created but token missing");
-  }
+  if (!session?.id || !session.public_token) throw new Error("Session created but token missing");
 
   // 5) Attach requested docs to session
   const joinRows = ids.map((document_request_id) => ({

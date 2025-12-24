@@ -1,3 +1,4 @@
+// src/app/clients/[id]/request-link.actions.ts
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -5,6 +6,9 @@ import { redirect } from "next/navigation";
 import { createSubmissionSessionForClient } from "@/lib/db/submissionSessions";
 import { enqueueEmail } from "@/lib/db/emailOutbox";
 import { requireUser } from "@/lib/auth/require-user";
+import { extractDueSettings } from "@/lib/forms/validators";
+
+type ClientEmailRow = { name: string | null; email: string | null };
 
 function requireStringArray(formData: FormData, key: string) {
   return formData
@@ -20,8 +24,12 @@ function checkbox(formData: FormData, key: string) {
   return s === "1" || s === "true" || s === "on" || s === "yes";
 }
 
-// Next.js uses a special error for redirect().
-// In Next 15, it contains a digest that starts with "NEXT_REDIRECT".
+function safeGet(formData: FormData, key: string) {
+  const v = formData.get(key);
+  return typeof v === "string" ? v.trim() : "";
+}
+
+// Next.js redirect() throws a special error; let it bubble.
 function isNextRedirect(e: unknown) {
   if (typeof e !== "object" || e === null) return false;
   const digest = (e as { digest?: unknown }).digest;
@@ -33,27 +41,31 @@ function errorMessage(e: unknown) {
     const code = (e as { code?: unknown }).code;
     const message = (e as { message?: unknown }).message;
 
-    if (code === "23505") {
-      return "Could not create request link due to a database uniqueness rule.";
-    }
-
+    if (code === "23505") return "Could not create request link due to a database uniqueness rule.";
     if (typeof message === "string" && message.trim()) return message;
   }
-
   return e instanceof Error ? e.message : "Could not create request link";
 }
 
-export async function createRequestLinkAction(
-  clientId: string,
-  formData: FormData
-) {
+export async function createRequestLinkAction(clientId: string, formData: FormData) {
   const selected = requireStringArray(formData, "document_request_id");
   const sendEmailNow = checkbox(formData, "send_email_now");
 
+  // preserve pane state
+  const lib = safeGet(formData, "lib") || "templates";
+  const edit = safeGet(formData, "edit") || "templates";
+
   try {
+    // ✅ session-specific due day
+    const { due_day_of_month, due_timezone } = extractDueSettings(formData);
+
     const created = await createSubmissionSessionForClient({
       clientId,
       documentRequestIds: selected,
+      dueDayOfMonth: due_day_of_month,
+      dueTimeZone: due_timezone,
+      sentVia: "manual",
+      requestSentAtIso: null,
     });
 
     revalidatePath(`/clients/${clientId}`);
@@ -66,13 +78,12 @@ export async function createRequestLinkAction(
         .select("name,email")
         .eq("id", clientId)
         .eq("user_id", user.id)
-        .single();
+        .single<ClientEmailRow>();
 
       if (cErr) throw new Error(cErr.message);
 
-      const email = (clientRow as any)?.email as string | null;
-      const name = ((clientRow as any)?.name as string | null) ?? "(client)";
-
+      const email = (clientRow?.email ?? "").trim();
+      const name = (clientRow?.name ?? "(client)").trim();
       if (!email) throw new Error("Client has no email address");
 
       const baseUrl = process.env.APP_BASE_URL;
@@ -92,17 +103,18 @@ export async function createRequestLinkAction(
       });
     }
 
-    // ✅ this throws a NEXT_REDIRECT "error" internally
     redirect(
-      `/clients/${clientId}?requestToken=${encodeURIComponent(
-        created.public_token
-      )}`
+      `/clients/${clientId}?lib=${encodeURIComponent(lib)}&edit=${encodeURIComponent(
+        edit
+      )}&requestToken=${encodeURIComponent(created.public_token)}&saved=request_link_created`
     );
   } catch (e: unknown) {
-    // ✅ IMPORTANT: let Next redirects bubble
     if (isNextRedirect(e)) throw e;
-
     const msg = errorMessage(e);
-    redirect(`/clients/${clientId}?requestError=${encodeURIComponent(msg)}`);
+    redirect(
+      `/clients/${clientId}?lib=${encodeURIComponent(lib)}&edit=${encodeURIComponent(
+        edit
+      )}&requestError=${encodeURIComponent(msg)}`
+    );
   }
 }
