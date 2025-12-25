@@ -1,3 +1,4 @@
+// src/app/api/email/dispatch/route.ts
 import { NextResponse } from "next/server";
 import { claimPendingEmails, markEmailFailed, markEmailSent } from "@/lib/db/emailOutbox";
 import { renderTemplate } from "@/lib/email/templates";

@@ -1,3 +1,4 @@
+// src/app/api/health/route.ts
 import { NextResponse, type NextRequest } from "next/server";
 import { withLogging } from "@/lib/api/with-logging";
 

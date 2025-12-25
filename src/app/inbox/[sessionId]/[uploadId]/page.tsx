@@ -1,3 +1,4 @@
+// src/app/inbox/[sessionId]/[uploadId]/page.tsx
 import Link from "next/link";
 import { getUpload, markUploadViewed } from "@/lib/db/uploads";
 import { acceptUploadAction, denyUploadAction } from "./actions";

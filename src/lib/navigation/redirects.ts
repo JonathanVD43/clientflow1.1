@@ -1,3 +1,4 @@
+// src/lib/navigation/redirects.ts
 import { redirect } from "next/navigation";
 
 export function redirectWithSuccess(path: string, message: string) {

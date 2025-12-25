@@ -1,3 +1,4 @@
+// src/app/clients/[id]/uploads/page.tsx
 import Link from "next/link";
 import { listUploadsForClient } from "@/lib/db/uploads";
 
