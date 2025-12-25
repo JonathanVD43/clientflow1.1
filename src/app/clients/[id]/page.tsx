@@ -242,7 +242,7 @@ export default async function ClientDetailPage({
 
   // IMPORTANT: no page scroll. All scrolling must be inside panes.
   return (
-    <main className="h-[100dvh] overflow-hidden bg-slate-50">
+    <main className="h-dvh overflow-hidden bg-slate-50">
       <div className="box-border flex h-full min-h-0 w-full flex-col gap-4 p-6">
         {/* Header */}
         <div className="flex flex-wrap items-start justify-between gap-3">

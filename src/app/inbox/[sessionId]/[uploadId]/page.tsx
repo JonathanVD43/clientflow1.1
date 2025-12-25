@@ -63,7 +63,7 @@ export default async function UploadViewPage({
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold">View upload</h1>
-            <div className="text-sm opacity-70 break-words">
+            <div className="text-sm opacity-70 wrap-break-word">
               {upload.original_filename}{" "}
               {upload.mime_type ? <span>· {upload.mime_type}</span> : null}
             </div>
