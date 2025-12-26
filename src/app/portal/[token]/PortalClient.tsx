@@ -1,7 +1,11 @@
+// src/app/portal/[token]/PortalClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { uploadFile } from "./upload";
+
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { Alert } from "@/components/ui/alert";
 
 type PortalDoc = {
   id: string;
@@ -46,6 +50,54 @@ function isInfoOk(x: PortalInfo): x is PortalInfoOk {
   );
 }
 
+function fmt(ts: string | null) {
+  if (!ts) return "—";
+  const d = new Date(ts);
+  return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
+}
+
+function Pill({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "success";
+}) {
+  const base =
+    "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium";
+  const styles =
+    tone === "success"
+      ? "border-green-200 bg-green-50 text-green-800"
+      : "border-slate-200 bg-white text-slate-700";
+  return <span className={`${base} ${styles}`}>{children}</span>;
+}
+
+function UploadLabelButton({
+  disabled,
+  variant,
+  children,
+}: {
+  disabled: boolean;
+  variant: "primary" | "secondary";
+  children: React.ReactNode;
+}) {
+  const base =
+    "inline-flex items-center justify-center gap-2 rounded-xl border text-sm font-medium transition active:scale-[0.99] whitespace-nowrap select-none";
+
+  const styles =
+    variant === "primary"
+      ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+      : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50";
+
+  const disabledStyles = disabled ? "opacity-50 pointer-events-none" : "";
+
+  return (
+    <span className={`${base} ${styles} px-4 py-2 ${disabledStyles}`}>
+      {children}
+    </span>
+  );
+}
+
 export default function PortalClient({ token }: { token: string }) {
   const [info, setInfo] = useState<PortalInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,7 +125,6 @@ export default function PortalClient({ token }: { token: string }) {
       try {
         await loadInfo(ac.signal);
       } catch {
-        // if aborted, ignore
         if (!ac.signal.aborted) setInfo({ error: "Failed to load portal" });
       } finally {
         if (!ac.signal.aborted) setLoading(false);
@@ -98,7 +149,6 @@ export default function PortalClient({ token }: { token: string }) {
       await uploadFile(token, file, docId);
       setOk((p) => ({ ...p, [docId]: "Uploaded successfully ✅" }));
 
-      // Refresh info so the UI shows "Submitted ✅"
       try {
         await loadInfo();
       } catch {
@@ -113,127 +163,162 @@ export default function PortalClient({ token }: { token: string }) {
   }
 
   return (
-    <main className="p-6 max-w-2xl space-y-4">
+    <main className="space-y-4">
       <div className="space-y-1">
-        <h1 className="text-xl font-semibold">Client portal</h1>
-        <p className="text-sm opacity-70">
+        <h1 className="text-2xl font-semibold text-slate-900">Client portal</h1>
+        <p className="text-sm text-slate-600">
           Upload the requested documents below.
         </p>
       </div>
 
       {loading ? (
-        <div className="opacity-70">Loading…</div>
+        <Card>
+          <CardContent className="p-4 text-sm text-slate-600">
+            Loading…
+          </CardContent>
+        </Card>
       ) : !info ? (
-        <div className="text-sm text-red-600">Could not load portal.</div>
+        <Alert variant="error">Could not load portal.</Alert>
       ) : "error" in info ? (
-        <div className="border rounded-xl p-4">
-          <div className="font-medium text-red-600">Access error</div>
-          <div className="text-sm opacity-70">{info.error}</div>
-        </div>
+        <Card>
+          <CardHeader>
+            <div className="text-sm font-semibold text-red-700">
+              Access error
+            </div>
+            <div className="text-sm text-slate-600">{info.error}</div>
+          </CardHeader>
+        </Card>
       ) : (
         <>
-          <div className="border rounded-xl p-4 space-y-1">
-            <div className="font-medium">{header?.name}</div>
-            <div className="text-sm opacity-70">
-              Due day: {header?.due_day_of_month ?? "—"} (
-              {header?.due_timezone ?? "—"})
-            </div>
-          </div>
+          <Card>
+            <CardHeader className="pb-0">
+              <div className="text-sm font-semibold text-slate-900">
+                {header?.name}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                Due day: {header?.due_day_of_month ?? "—"}{" "}
+                <span className="opacity-70">
+                  ({header?.due_timezone ?? "—"})
+                </span>
+                {" · "}Session{" "}
+                <span className="font-mono">{info.session.id}</span>
+                {info.session.opened_at ? (
+                  <>
+                    {" · "}Opened {fmt(info.session.opened_at)}
+                  </>
+                ) : null}
+              </div>
+            </CardHeader>
 
-          {info.documents.length === 0 ? (
-            <div className="opacity-70">
-              No document requests have been configured for this request link.
-            </div>
-          ) : (
-            <ul className="space-y-3">
-              {info.documents.map((d) => {
-                const isDone = d.submitted || !!ok[d.id];
-                const isBusy = !!busy[d.id];
-                const disabled = isBusy || isDone;
+            <CardContent className="pt-4">
+              {info.documents.length === 0 ? (
+                <div className="text-sm text-slate-600">
+                  No document requests have been configured for this request
+                  link.
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {info.documents.map((d) => {
+                    const isDone = d.submitted || !!ok[d.id];
+                    const isBusy = !!busy[d.id];
+                    const disabled = isBusy || isDone;
 
-                return (
-                  <li key={d.id} className="border rounded-xl p-4 space-y-3">
-                    <div className="space-y-1">
-                      <div className="font-medium flex items-center gap-2">
-                        <span>{d.title}</span>
+                    const labelVariant: "primary" | "secondary" = isDone
+                      ? "secondary"
+                      : "primary";
 
-                        {d.required ? (
-                          <span className="text-xs border rounded-full px-2 py-0.5">
-                            Required
-                          </span>
-                        ) : (
-                          <span className="text-xs border rounded-full px-2 py-0.5 opacity-70">
-                            Optional
-                          </span>
-                        )}
+                    return (
+                      <li key={d.id}>
+                        <Card className="border-slate-200">
+                          <CardHeader className="flex flex-row items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="truncate text-base font-semibold text-slate-900">
+                                  {d.title}
+                                </div>
 
-                        {d.submitted ? (
-                          <span className="text-xs border rounded-full px-2 py-0.5 text-green-700">
-                            Submitted ✅
-                          </span>
-                        ) : null}
-                      </div>
+                                {d.required ? (
+                                  <Pill>Required</Pill>
+                                ) : (
+                                  <Pill>Optional</Pill>
+                                )}
+                                {d.submitted ? (
+                                  <Pill tone="success">Submitted ✅</Pill>
+                                ) : null}
+                              </div>
 
-                      {d.description ? (
-                        <div className="text-sm opacity-70">
-                          {d.description}
-                        </div>
-                      ) : null}
+                              {d.description ? (
+                                <div className="mt-1 text-sm text-slate-600">
+                                  {d.description}
+                                </div>
+                              ) : null}
 
-                      {d.allowed_mime_types?.length ? (
-                        <div className="text-xs opacity-60">
-                          Allowed: {d.allowed_mime_types.join(", ")}
-                        </div>
-                      ) : (
-                        <div className="text-xs opacity-60">
-                          Allowed: any file type (v1)
-                        </div>
-                      )}
-                    </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {d.allowed_mime_types?.length ? (
+                                  <>
+                                    Allowed: {d.allowed_mime_types.join(", ")}
+                                  </>
+                                ) : (
+                                  <>Allowed: any file type (v1)</>
+                                )}
+                              </div>
+                            </div>
 
-                    <div className="flex items-center gap-3">
-                      <label
-                        className={`border rounded-lg px-4 py-2 cursor-pointer ${
-                          disabled ? "opacity-50 cursor-not-allowed" : ""
-                        }`}
-                      >
-                        <input
-                          type="file"
-                          className="hidden"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            e.currentTarget.value = "";
-                            onPickFile(d.id, f);
-                          }}
-                          disabled={disabled}
-                        />
-                        {isBusy
-                          ? "Uploading…"
-                          : isDone
-                          ? "Submitted"
-                          : "Choose file"}
-                      </label>
+                            {/* ✅ Clickable file input (label styled as button) */}
+                            <label
+                              className={
+                                disabled
+                                  ? "cursor-not-allowed"
+                                  : "cursor-pointer"
+                              }
+                            >
+                              <input
+                                type="file"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const f = e.target.files?.[0];
+                                  if (!f) return;
+                                  e.currentTarget.value = "";
+                                  onPickFile(d.id, f);
+                                }}
+                                disabled={disabled}
+                              />
 
-                      {ok[d.id] ? (
-                        <span className="text-sm text-green-700">
-                          {ok[d.id]}
-                        </span>
-                      ) : null}
+                              <UploadLabelButton
+                                disabled={disabled}
+                                variant={labelVariant}
+                              >
+                                {isBusy
+                                  ? "Uploading…"
+                                  : isDone
+                                  ? "Submitted"
+                                  : "Choose file"}
+                              </UploadLabelButton>
+                            </label>
+                          </CardHeader>
 
-                      {err[d.id] ? (
-                        <span className="text-sm text-red-700">
-                          {err[d.id]}
-                        </span>
-                      ) : null}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                          {ok[d.id] || err[d.id] ? (
+                            <CardContent className="pt-0">
+                              {ok[d.id] ? (
+                                <Alert variant="success">{ok[d.id]}</Alert>
+                              ) : null}
+                              {err[d.id] ? (
+                                <div className="mt-2">
+                                  <Alert variant="error">{err[d.id]}</Alert>
+                                </div>
+                              ) : null}
+                            </CardContent>
+                          ) : null}
+                        </Card>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
 
-          <div className="text-xs opacity-60">
+          <div className="text-xs text-slate-500">
             Tip: If a file is denied later, you’ll receive a new upload link for
             only those files.
           </div>

@@ -9,6 +9,10 @@ import {
   type ClientApprovedSessionRow,
 } from "@/lib/db/uploads";
 
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { LinkButton } from "@/components/ui/link-button";
+import { Alert } from "@/components/ui/alert";
+
 function fmt(ts: string | null) {
   if (!ts) return "—";
   const d = new Date(ts);
@@ -29,6 +33,59 @@ function expiresInLabel(deleteAfter: string | null) {
   return `expires in ${hours}h`;
 }
 
+function Segmented({
+  value,
+  pendingHref,
+  approvedHref,
+}: {
+  value: "pending" | "approved";
+  pendingHref: string;
+  approvedHref: string;
+}) {
+  return (
+    <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1 text-xs">
+      <Link
+        href={pendingHref}
+        prefetch={false}
+        className={
+          value === "pending"
+            ? "rounded-lg bg-white px-3 py-1.5 font-medium text-slate-900 shadow-sm"
+            : "rounded-lg px-3 py-1.5 font-medium text-slate-600 hover:text-slate-900"
+        }
+      >
+        Pending
+      </Link>
+      <Link
+        href={approvedHref}
+        prefetch={false}
+        className={
+          value === "approved"
+            ? "rounded-lg bg-white px-3 py-1.5 font-medium text-slate-900 shadow-sm"
+            : "rounded-lg px-3 py-1.5 font-medium text-slate-600 hover:text-slate-900"
+        }
+      >
+        Approved (72h)
+      </Link>
+    </div>
+  );
+}
+
+function Pill({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "warning";
+}) {
+  const base =
+    "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium";
+  const styles =
+    tone === "warning"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-slate-200 bg-white text-slate-700";
+  return <span className={`${base} ${styles}`}>{children}</span>;
+}
+
 export default async function InboxClientPage({
   params,
   searchParams,
@@ -42,15 +99,25 @@ export default async function InboxClientPage({
     assertUuid("clientId", clientId);
   } catch {
     return (
-      <main className="p-6 space-y-2">
-        <h1 className="text-xl font-semibold">Invalid client</h1>
-        <p className="opacity-70">
-          This doesn’t look like a valid UUID:{" "}
-          <span className="font-mono">{clientId}</span>
-        </p>
-        <Link className="underline" href="/inbox">
-          Back to inbox
-        </Link>
+      <main className="p-6">
+        <div className="mx-auto w-full max-w-2xl space-y-4">
+          <Card>
+            <CardHeader>
+              <h1 className="text-2xl font-semibold text-slate-900">
+                Invalid client
+              </h1>
+              <p className="text-sm text-slate-600">
+                This doesn’t look like a valid UUID:{" "}
+                <span className="font-mono text-slate-900">{clientId}</span>
+              </p>
+            </CardHeader>
+            <CardContent>
+              <LinkButton href="/inbox" variant="secondary" size="sm">
+                Back to inbox
+              </LinkButton>
+            </CardContent>
+          </Card>
+        </div>
       </main>
     );
   }
@@ -70,14 +137,22 @@ export default async function InboxClientPage({
 
   if (cErr) {
     return (
-      <main className="p-6 space-y-2">
-        <h1 className="text-xl font-semibold">Inbox</h1>
-        <div className="text-sm text-red-700">
-          Failed to load client: {cErr.message}
+      <main className="p-6">
+        <div className="mx-auto w-full max-w-2xl space-y-4">
+          <Card>
+            <CardHeader>
+              <h1 className="text-2xl font-semibold text-slate-900">Inbox</h1>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Alert variant="error">
+                Failed to load client: {cErr.message}
+              </Alert>
+              <LinkButton href="/inbox" variant="secondary" size="sm">
+                Back to inbox
+              </LinkButton>
+            </CardContent>
+          </Card>
         </div>
-        <Link className="underline" href="/inbox">
-          Back to inbox
-        </Link>
       </main>
     );
   }
@@ -91,142 +166,162 @@ export default async function InboxClientPage({
     : [];
 
   return (
-    <main className="p-6 max-w-2xl space-y-4">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold">Client inbox</h1>
+    <main className="p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-4">
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h1 className="text-2xl font-semibold text-slate-900">
+              Client inbox
+            </h1>
 
-        <div className="text-sm opacity-70">
-          Client:{" "}
-          <span className="font-medium">
-            {client?.name ?? "(unnamed)"}{" "}
-            {client?.email ? (
-              <span className="opacity-70">· {client.email}</span>
-            ) : null}
-          </span>
-        </div>
+            <div className="text-sm text-slate-600">
+              Client:{" "}
+              <span className="font-medium text-slate-900">
+                {client?.name ?? "(unnamed)"}
+              </span>
+              {client?.email ? (
+                <span className="ml-2 text-slate-500">· {client.email}</span>
+              ) : null}
+            </div>
 
-        <div className="flex gap-3 text-sm pt-1">
-          <Link className="underline" href="/inbox">
-            Back to inbox
-          </Link>
-          <Link className="underline" href={`/clients/${clientId}`}>
-            Client settings
-          </Link>
-        </div>
-
-        {/* Simple “filter” toggle */}
-        <div className="flex gap-3 text-sm pt-2">
-          <Link
-            className={`underline ${!showApproved ? "font-medium" : ""}`}
-            href={`/inbox/client/${clientId}?view=pending`}
-            prefetch={false}
-          >
-            Pending
-          </Link>
-          <Link
-            className={`underline ${showApproved ? "font-medium" : ""}`}
-            href={`/inbox/client/${clientId}?view=approved`}
-            prefetch={false}
-          >
-            Approved (72h)
-          </Link>
-        </div>
-      </div>
-
-      {/* Pending view */}
-      {!showApproved ? (
-        pendingSessions.length === 0 ? (
-          <div className="opacity-70">
-            No sessions currently have pending uploads for review.
+            <div className="flex flex-wrap gap-2 pt-1">
+              <LinkButton href="/inbox" variant="secondary" size="sm">
+                Back
+              </LinkButton>
+              <LinkButton
+                href={`/clients/${clientId}`}
+                variant="ghost"
+                size="sm"
+                className="text-slate-700"
+              >
+                Client settings
+              </LinkButton>
+            </div>
           </div>
-        ) : (
-          <ul className="space-y-2">
-            {pendingSessions.map((s: ClientReviewSessionRow) => {
-              const href = `/inbox/${s.session_id}`;
-              const hasNew = Number(s.pending_new ?? 0) > 0;
 
-              return (
-                <li key={`pending-${s.session_id}`} className="border rounded-xl p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 space-y-1">
-                      <div className="font-medium truncate flex items-center gap-2">
-                        <span className="truncate">Session</span>
-                        <span className="text-xs font-mono opacity-60 truncate">
-                          {s.session_id}
-                        </span>
+          <Segmented
+            value={showApproved ? "approved" : "pending"}
+            pendingHref={`/inbox/client/${clientId}?view=pending`}
+            approvedHref={`/inbox/client/${clientId}?view=approved`}
+          />
+        </div>
 
-                        {hasNew ? (
-                          <span className="text-xs border rounded-full px-2 py-0.5">
-                            {s.pending_new} new
-                          </span>
-                        ) : null}
-                      </div>
+        {/* Pending view */}
+        {!showApproved ? (
+          pendingSessions.length === 0 ? (
+            <Card>
+              <CardContent className="p-4 text-sm text-slate-600">
+                No sessions currently have pending uploads for review.
+              </CardContent>
+            </Card>
+          ) : (
+            <ul className="space-y-3">
+              {pendingSessions.map((s: ClientReviewSessionRow) => {
+                const href = `/inbox/${s.session_id}`;
+                const hasNew = Number(s.pending_new ?? 0) > 0;
 
-                      <div className="text-sm opacity-70">
-                        Pending: {s.pending_total ?? 0}
-                        <span className="ml-2">· Session status: {s.status}</span>
-                      </div>
+                return (
+                  <li key={`pending-${s.session_id}`}>
+                    <Card>
+                      <CardHeader className="flex flex-row items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-base font-semibold text-slate-900">
+                              Session
+                            </div>
+                            <span className="truncate text-xs font-mono text-slate-500">
+                              {s.session_id}
+                            </span>
+                            {hasNew ? (
+                              <Pill tone="warning">{s.pending_new} new</Pill>
+                            ) : null}
+                          </div>
 
-                      <div className="text-xs opacity-60">
+                          <div className="mt-1 text-sm text-slate-700">
+                            Pending:{" "}
+                            <span className="font-medium text-slate-900">
+                              {s.pending_total ?? 0}
+                            </span>
+                            <span className="ml-2 text-slate-500">
+                              · status: {s.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        <LinkButton href={href} prefetch={false} size="sm">
+                          Open
+                        </LinkButton>
+                      </CardHeader>
+
+                      <CardContent className="text-xs text-slate-500">
                         Opened: {fmt(s.opened_at)} · Last upload:{" "}
                         {fmt(s.last_uploaded_at)}
-                      </div>
-                    </div>
+                      </CardContent>
+                    </Card>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : null}
 
-                    <Link className="underline shrink-0" href={href} prefetch={false}>
-                      Open
-                    </Link>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )
-      ) : null}
+        {/* Approved view */}
+        {showApproved ? (
+          approvedSessions.length === 0 ? (
+            <Card>
+              <CardContent className="p-4 text-sm text-slate-600">
+                No approved sessions currently have downloadable files within
+                the 72h window.
+              </CardContent>
+            </Card>
+          ) : (
+            <ul className="space-y-3">
+              {approvedSessions.map((s: ClientApprovedSessionRow) => {
+                const href = `/inbox/${s.session_id}`;
 
-      {/* Approved view */}
-      {showApproved ? (
-        approvedSessions.length === 0 ? (
-          <div className="opacity-70">
-            No approved sessions currently have downloadable files within the 72h window.
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {approvedSessions.map((s: ClientApprovedSessionRow) => {
-              const href = `/inbox/${s.session_id}`;
+                return (
+                  <li key={`approved-${s.session_id}`}>
+                    <Card>
+                      <CardHeader className="flex flex-row items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-base font-semibold text-slate-900">
+                              Session
+                            </div>
+                            <span className="truncate text-xs font-mono text-slate-500">
+                              {s.session_id}
+                            </span>
+                          </div>
 
-              return (
-                <li key={`approved-${s.session_id}`} className="border rounded-xl p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 space-y-1">
-                      <div className="font-medium truncate flex items-center gap-2">
-                        <span className="truncate">Session</span>
-                        <span className="text-xs font-mono opacity-60 truncate">
-                          {s.session_id}
-                        </span>
-                      </div>
+                          <div className="mt-1 text-sm text-slate-700">
+                            Approved files:{" "}
+                            <span className="font-medium text-slate-900">
+                              {s.accepted_total ?? 0}
+                            </span>
+                            <span className="ml-2 text-slate-500">
+                              · status: {s.status}
+                            </span>
+                          </div>
+                        </div>
 
-                      <div className="text-sm opacity-70">
-                        Approved files: {s.accepted_total ?? 0}
-                        <span className="ml-2">· Session status: {s.status}</span>
-                      </div>
+                        <LinkButton href={href} prefetch={false} size="sm">
+                          Open
+                        </LinkButton>
+                      </CardHeader>
 
-                      <div className="text-xs opacity-60">
+                      <CardContent className="text-xs text-slate-500">
                         Last approved: {fmt(s.last_reviewed_at)} ·{" "}
                         {s.expires_at ? expiresInLabel(s.expires_at) : "—"}
-                      </div>
-                    </div>
-
-                    <Link className="underline shrink-0" href={href} prefetch={false}>
-                      Open
-                    </Link>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )
-      ) : null}
+                      </CardContent>
+                    </Card>
+                  </li>
+                );
+              })}
+            </ul>
+          )
+        ) : null}
+      </div>
     </main>
   );
 }

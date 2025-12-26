@@ -1,19 +1,23 @@
+// src/app/login/page.tsx
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabaseBrowser } from "@/lib/supabase/browser";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Alert } from "@/components/ui/alert";
 
-export default function LoginPage({
-  searchParams,
-}: {
-  searchParams: { next?: string; error?: string };
-}) {
+export default function LoginPage() {
+  const sp = useSearchParams();
+
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const next = searchParams?.next || "/clients";
-  const errorFromUrl = searchParams?.error;
+  const next = sp.get("next") || "/clients";
+  const errorFromUrl = sp.get("error");
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,40 +38,47 @@ export default function LoginPage({
   }
 
   return (
-    <main className="p-6 max-w-md space-y-4">
-      <h1 className="text-xl font-semibold">Sign in</h1>
+    <main className="min-h-dvh bg-slate-50 p-6">
+      <div className="mx-auto max-w-md">
+        <Card>
+          <CardHeader>
+            <h1 className="text-xl font-semibold text-slate-900">Sign in</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              We’ll email you a magic link.
+            </p>
+          </CardHeader>
 
-      {errorFromUrl ? (
-        <div className="border rounded-lg p-3 text-sm whitespace-pre-wrap">
-          {errorFromUrl}
-        </div>
-      ) : null}
+          <CardContent className="space-y-3">
+            {errorFromUrl ? <Alert variant="error">{errorFromUrl}</Alert> : null}
 
-      {sent ? (
-        <p className="opacity-70">Check your email for a magic link.</p>
-      ) : (
-        <form onSubmit={onSubmit} className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-sm">Email</label>
-            <input
-              className="w-full border rounded-lg p-2"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@company.com"
-            />
-          </div>
+            {sent ? (
+              <Alert variant="success">Check your email for a magic link.</Alert>
+            ) : (
+              <form onSubmit={onSubmit} className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-slate-700">
+                    Email
+                  </label>
+                  <Input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@company.com"
+                    error={Boolean(error)}
+                  />
+                </div>
 
-          {error ? (
-            <p className="text-sm whitespace-pre-wrap">{error}</p>
-          ) : null}
+                {error ? <Alert variant="error">{error}</Alert> : null}
 
-          <button className="border rounded-lg px-4 py-2">
-            Send magic link
-          </button>
-        </form>
-      )}
+                <Button variant="primary" className="w-full">
+                  Send magic link
+                </Button>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }

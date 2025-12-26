@@ -71,7 +71,9 @@ export async function getUpload(uploadId: string): Promise<UploadRow> {
   return data as unknown as UploadRow;
 }
 
-export async function markUploadViewed(uploadId: string): Promise<{ id: string }> {
+export async function markUploadViewed(
+  uploadId: string
+): Promise<{ id: string }> {
   assertUuid("uploadId", uploadId);
   const { supabase, user } = await requireUser();
 
@@ -90,7 +92,9 @@ export async function markUploadViewed(uploadId: string): Promise<{ id: string }
   return { id: (data?.id as string) ?? uploadId };
 }
 
-export async function listUploadsForClient(clientId: string): Promise<UploadRow[]> {
+export async function listUploadsForClient(
+  clientId: string
+): Promise<UploadRow[]> {
   assertUuid("clientId", clientId);
   const { supabase, user } = await requireUser();
 
@@ -128,7 +132,9 @@ export async function listUploadsForClient(clientId: string): Promise<UploadRow[
  * Used by /clients page "New" badge.
  * Returns client IDs that have PENDING uploads not yet viewed in the inbox.
  */
-export async function listClientIdsWithUnseenPendingUploads(): Promise<Set<string>> {
+export async function listClientIdsWithUnseenPendingUploads(): Promise<
+  Set<string>
+> {
   const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase
@@ -214,7 +220,10 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
         client_id: r.client_id,
         client: clientOne,
         session: sessionOne
-          ? { status: sessionOne.status ?? null, opened_at: sessionOne.opened_at ?? null }
+          ? {
+              status: sessionOne.status ?? null,
+              opened_at: sessionOne.opened_at ?? null,
+            }
           : null,
         pending_total: 0,
         pending_new: 0,
@@ -224,13 +233,19 @@ export async function listInboxSessions(): Promise<InboxSessionRow[]> {
     cur.pending_total += 1;
     if (!r.viewed_at) cur.pending_new += 1;
 
-    if (r.uploaded_at && (!cur.last_uploaded_at || r.uploaded_at > cur.last_uploaded_at)) {
+    if (
+      r.uploaded_at &&
+      (!cur.last_uploaded_at || r.uploaded_at > cur.last_uploaded_at)
+    ) {
       cur.last_uploaded_at = r.uploaded_at;
     }
 
     if (!cur.client && clientOne) cur.client = clientOne;
     if (!cur.session && sessionOne)
-      cur.session = { status: sessionOne.status ?? null, opened_at: sessionOne.opened_at ?? null };
+      cur.session = {
+        status: sessionOne.status ?? null,
+        opened_at: sessionOne.opened_at ?? null,
+      };
 
     bySession.set(sid, cur);
   }
@@ -255,7 +270,9 @@ export type ApprovedInboxSessionRow = {
   expires_at: string | null; // soonest expiry across accepted files in the session
 };
 
-export async function listApprovedInboxSessions(): Promise<ApprovedInboxSessionRow[]> {
+export async function listApprovedInboxSessions(): Promise<
+  ApprovedInboxSessionRow[]
+> {
   const { supabase, user } = await requireUser();
   const nowIso = isoNow();
 
@@ -315,7 +332,10 @@ export async function listApprovedInboxSessions(): Promise<ApprovedInboxSessionR
         client_id: r.client_id,
         client: clientOne,
         session: sessionOne
-          ? { status: sessionOne.status ?? null, opened_at: sessionOne.opened_at ?? null }
+          ? {
+              status: sessionOne.status ?? null,
+              opened_at: sessionOne.opened_at ?? null,
+            }
           : null,
         accepted_total: 0,
         last_reviewed_at: null,
@@ -328,18 +348,27 @@ export async function listApprovedInboxSessions(): Promise<ApprovedInboxSessionR
 
     cur.accepted_total += 1;
 
-    if (r.reviewed_at && (!cur.last_reviewed_at || r.reviewed_at > cur.last_reviewed_at)) {
+    if (
+      r.reviewed_at &&
+      (!cur.last_reviewed_at || r.reviewed_at > cur.last_reviewed_at)
+    ) {
       cur.last_reviewed_at = r.reviewed_at;
     }
 
     // conservative: soonest expiry across accepted files
-    if (r.delete_after_at && (!cur.expires_at || r.delete_after_at < cur.expires_at)) {
+    if (
+      r.delete_after_at &&
+      (!cur.expires_at || r.delete_after_at < cur.expires_at)
+    ) {
       cur.expires_at = r.delete_after_at;
     }
 
     if (!cur.client && clientOne) cur.client = clientOne;
     if (!cur.session && sessionOne)
-      cur.session = { status: sessionOne.status ?? null, opened_at: sessionOne.opened_at ?? null };
+      cur.session = {
+        status: sessionOne.status ?? null,
+        opened_at: sessionOne.opened_at ?? null,
+      };
 
     bySession.set(sid, cur);
   }
@@ -360,7 +389,9 @@ export type InboxClientPendingRow = {
   client: { name: string | null; email: string | null } | null;
 };
 
-export async function listInboxClientsWithPendingCounts(): Promise<InboxClientPendingRow[]> {
+export async function listInboxClientsWithPendingCounts(): Promise<
+  InboxClientPendingRow[]
+> {
   const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase
@@ -380,7 +411,11 @@ export async function listInboxClientsWithPendingCounts(): Promise<InboxClientPe
 
   const byClient = new Map<
     string,
-    { pending_total: number; pending_new: number; client: { name: string | null; email: string | null } | null }
+    {
+      pending_total: number;
+      pending_new: number;
+      client: { name: string | null; email: string | null } | null;
+    }
   >();
 
   for (const row of data ?? []) {
@@ -430,7 +465,9 @@ export type ClientReviewSessionRow = {
   pending_new: number;
 };
 
-export async function listReviewSessionsForClient(clientId: string): Promise<ClientReviewSessionRow[]> {
+export async function listReviewSessionsForClient(
+  clientId: string
+): Promise<ClientReviewSessionRow[]> {
   assertUuid("clientId", clientId);
   const { supabase, user } = await requireUser();
 
@@ -453,7 +490,13 @@ export async function listReviewSessionsForClient(clientId: string): Promise<Cli
 
   const bySession = new Map<
     string,
-    { status: SessionStatus | null; opened_at: string | null; last_uploaded_at: string | null; pending_total: number; pending_new: number }
+    {
+      status: SessionStatus | null;
+      opened_at: string | null;
+      last_uploaded_at: string | null;
+      pending_total: number;
+      pending_new: number;
+    }
   >();
 
   for (const row of data ?? []) {
@@ -483,7 +526,10 @@ export async function listReviewSessionsForClient(clientId: string): Promise<Cli
     cur.pending_total += 1;
     if (!r.viewed_at) cur.pending_new += 1;
 
-    if (r.uploaded_at && (!cur.last_uploaded_at || r.uploaded_at > cur.last_uploaded_at)) {
+    if (
+      r.uploaded_at &&
+      (!cur.last_uploaded_at || r.uploaded_at > cur.last_uploaded_at)
+    ) {
       cur.last_uploaded_at = r.uploaded_at;
     }
 
@@ -521,7 +567,9 @@ export type ClientApprovedSessionRow = {
   accepted_total: number;
 };
 
-export async function listApprovedSessionsForClient(clientId: string): Promise<ClientApprovedSessionRow[]> {
+export async function listApprovedSessionsForClient(
+  clientId: string
+): Promise<ClientApprovedSessionRow[]> {
   assertUuid("clientId", clientId);
   const { supabase, user } = await requireUser();
 
@@ -547,7 +595,13 @@ export async function listApprovedSessionsForClient(clientId: string): Promise<C
 
   const bySession = new Map<
     string,
-    { status: SessionStatus | null; opened_at: string | null; last_reviewed_at: string | null; expires_at: string | null; accepted_total: number }
+    {
+      status: SessionStatus | null;
+      opened_at: string | null;
+      last_reviewed_at: string | null;
+      expires_at: string | null;
+      accepted_total: number;
+    }
   >();
 
   for (const row of data ?? []) {
@@ -576,11 +630,17 @@ export async function listApprovedSessionsForClient(clientId: string): Promise<C
 
     cur.accepted_total += 1;
 
-    if (r.reviewed_at && (!cur.last_reviewed_at || r.reviewed_at > cur.last_reviewed_at)) {
+    if (
+      r.reviewed_at &&
+      (!cur.last_reviewed_at || r.reviewed_at > cur.last_reviewed_at)
+    ) {
       cur.last_reviewed_at = r.reviewed_at;
     }
 
-    if (r.delete_after_at && (!cur.expires_at || r.delete_after_at < cur.expires_at)) {
+    if (
+      r.delete_after_at &&
+      (!cur.expires_at || r.delete_after_at < cur.expires_at)
+    ) {
       cur.expires_at = r.delete_after_at;
     }
 
@@ -656,8 +716,14 @@ export async function listPendingUploadsForSession(sessionId: string): Promise<{
   if (upErr) throw new Error(upErr.message);
 
   return {
-    client: { id: (clientRow as { id: string }).id, name: (clientRow as { name: string }).name },
-    session: { id: (sessionRow as { id: string }).id, opened_at: (sessionRow as { opened_at: string | null }).opened_at },
+    client: {
+      id: (clientRow as { id: string }).id,
+      name: (clientRow as { name: string }).name,
+    },
+    session: {
+      id: (sessionRow as { id: string }).id,
+      opened_at: (sessionRow as { opened_at: string | null }).opened_at,
+    },
     uploads: (uploads ?? []) as unknown as PendingSessionUploadRow[],
   };
 }
@@ -719,6 +785,15 @@ export async function reviewUpload(input: {
  * - enforces delete_after_at retention
  * - marks viewed_at
  */
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export async function getUploadForDownload(uploadId: string): Promise<{
   storage_key: string;
   mime_type: string | null;
@@ -729,12 +804,26 @@ export async function getUploadForDownload(uploadId: string): Promise<{
 
   const { data: upload, error } = await supabase
     .from("uploads")
-    .select("id,storage_key,mime_type,status,deleted_at,delete_after_at,original_filename,viewed_at")
+    .select(
+      "id,storage_key,mime_type,status,deleted_at,delete_after_at,original_filename,viewed_at"
+    )
     .eq("id", uploadId)
     .eq("user_id", user.id)
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Supabase can return "PGRST116" for "Results contain 0 rows" (not found)
+    const msg = error.message || "Upload lookup failed";
+    const lower = msg.toLowerCase();
+    const status =
+      lower.includes("0 rows") ||
+      lower.includes("no rows") ||
+      lower.includes("not found")
+        ? 404
+        : 500;
+
+    throw new HttpError(status, msg);
+  }
 
   const u = upload as unknown as {
     id: string;
@@ -747,12 +836,13 @@ export async function getUploadForDownload(uploadId: string): Promise<{
     viewed_at: string | null;
   };
 
-  if (u.deleted_at) throw new Error("Upload deleted");
-  if (!u.storage_key) throw new Error("Upload not ready (missing storage key)");
+  if (u.deleted_at) throw new HttpError(404, "Upload deleted");
+  if (!u.storage_key)
+    throw new HttpError(409, "Upload not ready (missing storage key)");
 
   if (u.delete_after_at) {
     const nowIso = isoNow();
-    if (u.delete_after_at <= nowIso) throw new Error("Upload expired");
+    if (u.delete_after_at <= nowIso) throw new HttpError(410, "Upload expired");
   }
 
   if (!u.viewed_at) {
@@ -788,7 +878,12 @@ export type SessionReviewFileRow = {
 };
 
 export async function getSessionReviewSummary(sessionId: string): Promise<{
-  session: { id: string; status: SessionStatus; opened_at: string | null; finalized_at: string | null };
+  session: {
+    id: string;
+    status: SessionStatus;
+    opened_at: string | null;
+    finalized_at: string | null;
+  };
   client: { id: string; name: string };
   hasPending: boolean;
   accepted: SessionReviewFileRow[];
@@ -882,7 +977,8 @@ export async function getSessionReviewSummary(sessionId: string): Promise<{
       id: (sessionRow as { id: string }).id,
       status: (sessionRow as { status: SessionStatus }).status,
       opened_at: (sessionRow as { opened_at: string | null }).opened_at,
-      finalized_at: (sessionRow as { finalized_at: string | null }).finalized_at,
+      finalized_at: (sessionRow as { finalized_at: string | null })
+        .finalized_at,
     },
     client: {
       id: (clientRow as { id: string }).id,

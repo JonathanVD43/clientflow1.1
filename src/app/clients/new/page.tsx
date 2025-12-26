@@ -1,43 +1,77 @@
 // src/app/clients/new/page.tsx
 import { createClientAction } from "./actions";
 
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { LinkButton } from "@/components/ui/link-button";
+
 export default function NewClientPage() {
   return (
-    <main className="p-6 max-w-xl space-y-4">
-      <h1 className="text-xl font-semibold">New client</h1>
+    <main className="p-6">
+      <div className="mx-auto w-full max-w-xl space-y-4">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold text-slate-900">New client</h1>
 
-      <form action={createClientAction} className="space-y-3">
-        <div className="space-y-1">
-          <label className="text-sm">Name</label>
-          <input
-            name="name"
-            required
-            className="w-full border rounded-lg p-2"
-            placeholder="Acme (Pty) Ltd"
-          />
+          <LinkButton href="/clients" variant="ghost" size="sm">
+            Back
+          </LinkButton>
         </div>
 
-        <div className="space-y-1">
-          <label className="text-sm">Email (optional)</label>
-          <input
-            name="email"
-            type="email"
-            className="w-full border rounded-lg p-2"
-            placeholder="billing@acme.co.za"
-          />
-        </div>
+        {/* Form */}
+        <Card>
+          <CardHeader>
+            <div className="text-sm text-slate-600">
+              Create a new client and configure settings later.
+            </div>
+          </CardHeader>
 
-        <div className="space-y-1">
-          <label className="text-sm">Phone (optional)</label>
-          <input
-            name="phone_number"
-            className="w-full border rounded-lg p-2"
-            placeholder="+27821234567"
-          />
-        </div>
+          <CardContent>
+            <form action={createClientAction} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600">
+                  Name
+                </label>
+                <Input
+                  name="name"
+                  required
+                  placeholder="Acme (Pty) Ltd"
+                />
+              </div>
 
-        <button className="border rounded-lg px-4 py-2">Create</button>
-      </form>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600">
+                  Email (optional)
+                </label>
+                <Input
+                  name="email"
+                  type="email"
+                  placeholder="billing@acme.co.za"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-slate-600">
+                  Phone (optional)
+                </label>
+                <Input
+                  name="phone_number"
+                  placeholder="+27821234567"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <LinkButton href="/clients" variant="secondary">
+                  Cancel
+                </LinkButton>
+
+                <Button variant="primary">Create client</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </main>
   );
 }

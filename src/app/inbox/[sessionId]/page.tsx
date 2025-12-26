@@ -1,10 +1,14 @@
 // src/app/inbox/[sessionId]/page.tsx
-import Link from "next/link";
 import {
   listPendingUploadsForSession,
   getSessionReviewSummary,
 } from "@/lib/db/uploads";
 import { requestReplacementsAction } from "./actions";
+
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { LinkButton } from "@/components/ui/link-button";
+import { Alert } from "@/components/ui/alert";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -15,14 +19,26 @@ function fmt(ts: string | null) {
   return d.toISOString().replace("T", " ").slice(0, 16) + "Z";
 }
 
-function statusBadge(status: string) {
-  const base = "text-xs border rounded-full px-2 py-0.5";
-  if (status === "PENDING") return <span className={base}>Pending</span>;
-  if (status === "ACCEPTED")
-    return <span className={`${base} text-green-700`}>Accepted</span>;
-  if (status === "DENIED")
-    return <span className={`${base} text-red-700`}>Denied</span>;
-  return <span className={`${base} opacity-70`}>{status}</span>;
+function Pill({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "success" | "danger" | "warning";
+}) {
+  const base =
+    "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium";
+
+  const styles =
+    tone === "success"
+      ? "border-green-200 bg-green-50 text-green-800"
+      : tone === "danger"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : tone === "warning"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
+      : "border-slate-200 bg-white text-slate-700";
+
+  return <span className={`${base} ${styles}`}>{children}</span>;
 }
 
 function expiresInLabel(deleteAfter: string | null) {
@@ -53,256 +69,275 @@ export default async function InboxSessionPage({
 
   if (!UUID_RE.test(sessionId)) {
     return (
-      <main className="p-6 space-y-2">
-        <h1 className="text-xl font-semibold">Invalid session</h1>
-        <p className="opacity-70">
-          This doesn’t look like a valid UUID:{" "}
-          <span className="font-mono">{sessionId}</span>
-        </p>
-        <Link className="underline" href="/inbox">
-          Back to inbox
-        </Link>
+      <main className="p-6">
+        <div className="mx-auto max-w-2xl">
+          <Card>
+            <CardHeader>
+              <h1 className="text-2xl font-semibold text-slate-900">
+                Invalid session
+              </h1>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-600">
+                This doesn’t look like a valid UUID:{" "}
+                <span className="font-mono">{sessionId}</span>
+              </p>
+              <div className="mt-3">
+                <LinkButton href="/inbox" variant="secondary" size="sm">
+                  Back to inbox
+                </LinkButton>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </main>
     );
   }
 
-  // Keep your existing “pending queue” behavior
   const pendingBundle = await listPendingUploadsForSession(sessionId);
-
   const hasPending = pendingBundle.uploads.length > 0;
+
+  /* ───────────────────────── Pending queue ───────────────────────── */
 
   if (hasPending) {
     const { client, session, uploads } = pendingBundle;
 
     return (
-      <main className="p-6 max-w-2xl space-y-4">
-        <div className="space-y-1">
-          <h1 className="text-xl font-semibold">Review queue</h1>
-          <div className="text-sm opacity-70">
-            Client: <span className="font-medium">{client.name}</span>
-          </div>
-          <div className="text-xs opacity-60">
-            Session: <span className="font-mono">{session.id}</span> · Opened:{" "}
-            {fmt(session.opened_at)}
-          </div>
+      <main className="p-6">
+        <div className="mx-auto w-full max-w-3xl space-y-4">
+          {/* Header */}
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold text-slate-900">
+              Review queue
+            </h1>
+            <div className="text-sm text-slate-600">
+              Client:{" "}
+              <span className="font-medium text-slate-900">{client.name}</span>
+            </div>
+            <div className="text-xs text-slate-500">
+              Session <span className="font-mono">{session.id}</span> · Opened{" "}
+              {fmt(session.opened_at)}
+            </div>
 
-          <div className="flex gap-3 text-sm pt-1">
-            <Link className="underline" href="/inbox">
-              Back to inbox
-            </Link>
-            <Link className="underline" href={`/clients/${client.id}`}>
-              Client settings
-            </Link>
-          </div>
-        </div>
-
-        {saved ? (
-          <div className="border border-green-300 bg-green-50 text-green-800 rounded-lg p-3 text-sm">
-            {saved === "accepted"
-              ? "Upload approved ✅"
-              : saved === "denied"
-              ? "Upload denied ✅"
-              : "Saved ✅"}
-          </div>
-        ) : null}
-
-        {error ? (
-          <div className="border border-red-300 bg-red-50 text-red-800 rounded-lg p-3 text-sm">
-            {error}
-          </div>
-        ) : null}
-
-        <ul className="space-y-2">
-          {uploads.map((u) => {
-            const isNew = !u.viewed_at;
-            const viewHref = `/inbox/${sessionId}/${u.id}`;
-
-            return (
-              <li
-                key={`pending-${u.id}`}
-                className="border rounded-xl p-4 space-y-2"
+            <div className="flex gap-2 pt-2">
+              <LinkButton href="/inbox" variant="secondary" size="sm">
+                Back to inbox
+              </LinkButton>
+              <LinkButton
+                href={`/clients/${client.id}`}
+                variant="ghost"
+                size="sm"
+                className="text-slate-700"
               >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0 space-y-1">
-                    <div className="font-medium truncate flex items-center gap-2">
-                      <span className="truncate">{u.original_filename}</span>
+                Client settings
+              </LinkButton>
+            </div>
+          </div>
 
-                      {isNew ? (
-                        <span className="text-xs border rounded-full px-2 py-0.5">
-                          New
-                        </span>
-                      ) : null}
-                    </div>
+          {saved ? (
+            <Alert variant="success">
+              {saved === "accepted"
+                ? "Upload approved"
+                : saved === "denied"
+                ? "Upload denied"
+                : "Saved"}{" "}
+              ✅
+            </Alert>
+          ) : null}
 
-                    <div className="text-xs opacity-60">
-                      Uploaded: {fmt(u.uploaded_at)}
-                      {u.size_bytes != null ? (
-                        <span className="ml-2">
-                          · {u.size_bytes.toLocaleString()} bytes
-                        </span>
-                      ) : null}
-                      {u.mime_type ? (
-                        <span className="ml-2">· {u.mime_type}</span>
-                      ) : null}
-                    </div>
-                  </div>
+          {error ? <Alert variant="error">{error}</Alert> : null}
 
-                  <Link
-                    className="underline text-sm shrink-0"
-                    href={viewHref}
-                    prefetch={false}
-                  >
-                    View
-                  </Link>
-                </div>
+          {/* Upload list */}
+          <ul className="space-y-3">
+            {uploads.map((u) => {
+              const isNew = !u.viewed_at;
+              const viewHref = `/inbox/${sessionId}/${u.id}`;
 
-                <div className="text-xs opacity-60">
-                  Opening “View” marks it as seen automatically.
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+              return (
+                <li key={u.id}>
+                  <Card>
+                    <CardHeader className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate font-semibold text-slate-900">
+                            {u.original_filename}
+                          </div>
+                          {isNew ? <Pill tone="warning">New</Pill> : null}
+                        </div>
+
+                        <div className="mt-1 text-xs text-slate-500">
+                          Uploaded {fmt(u.uploaded_at)}
+                          {u.size_bytes != null ? (
+                            <span className="ml-2">
+                              · {u.size_bytes.toLocaleString()} bytes
+                            </span>
+                          ) : null}
+                          {u.mime_type ? (
+                            <span className="ml-2">· {u.mime_type}</span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <LinkButton href={viewHref} prefetch={false} size="sm">
+                        View
+                      </LinkButton>
+                    </CardHeader>
+
+                    <CardContent className="text-xs text-slate-500">
+                      Opening “View” marks this upload as seen.
+                    </CardContent>
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </main>
     );
   }
 
-  // ✅ No pending: show session summary
+  /* ───────────────────────── Review complete ───────────────────────── */
+
   const summary = await getSessionReviewSummary(sessionId);
-  const deniedCount = summary.denied.length;
-  const acceptedCount = summary.accepted.length;
 
   return (
-    <main className="p-6 max-w-3xl space-y-4">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold">Review complete</h1>
-        <div className="text-sm opacity-70">
-          Review complete for this request ·{" "}
-          <span className="font-medium">{summary.client.name}</span>
-        </div>
-        <div className="text-xs opacity-60">
-          Session: <span className="font-mono">{summary.session.id}</span> ·
-          Status: {statusBadge(summary.session.status)}
+    <main className="p-6">
+      <div className="mx-auto w-full max-w-3xl space-y-4">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold text-slate-900">
+            Review complete
+          </h1>
+          <div className="text-sm text-slate-600">
+            Client{" "}
+            <span className="font-medium text-slate-900">
+              {summary.client.name}
+            </span>
+          </div>
+          <div className="text-xs text-slate-500">
+            Session <span className="font-mono">{summary.session.id}</span> ·
+            Status <Pill tone="success">{summary.session.status}</Pill>
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <LinkButton href="/inbox" variant="secondary" size="sm">
+              Back to inbox
+            </LinkButton>
+            <LinkButton
+              href={`/clients/${summary.client.id}`}
+              variant="ghost"
+              size="sm"
+              className="text-slate-700"
+            >
+              Client settings
+            </LinkButton>
+          </div>
         </div>
 
-        <div className="flex gap-3 text-sm pt-1">
-          <Link className="underline" href="/inbox">
-            Back to inbox
-          </Link>
-          <Link className="underline" href={`/clients/${summary.client.id}`}>
-            Client settings
-          </Link>
+        {error ? <Alert variant="error">{error}</Alert> : null}
+
+        <Card>
+          <CardContent className="text-sm">
+            Accepted{" "}
+            <span className="font-medium">{summary.accepted.length}</span> ·
+            Denied <span className="font-medium">{summary.denied.length}</span>
+          </CardContent>
+        </Card>
+
+        {/* Accepted */}
+        <div className="space-y-2">
+          <h2 className="font-medium">Accepted</h2>
+          {summary.accepted.length === 0 ? (
+            <div className="text-sm text-slate-600">None</div>
+          ) : (
+            <ul className="space-y-2">
+              {summary.accepted.map((u) => (
+                <li key={u.upload_id}>
+                  <Card>
+                    <CardHeader className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">
+                          {u.document_title}
+                        </div>
+                        <div className="text-sm text-slate-600 truncate">
+                          {u.original_filename}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {expiresInLabel(u.delete_after_at)}
+                        </div>
+                      </div>
+
+                      <LinkButton
+                        href={`/inbox/${sessionId}/${u.upload_id}`}
+                        prefetch={false}
+                        size="sm"
+                      >
+                        View
+                      </LinkButton>
+                    </CardHeader>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
+
+        {/* Denied */}
+        <div className="space-y-2">
+          <h2 className="font-medium">Denied</h2>
+          {summary.denied.length === 0 ? (
+            <div className="text-sm text-slate-600">None</div>
+          ) : (
+            <ul className="space-y-2">
+              {summary.denied.map((u) => (
+                <li key={u.upload_id}>
+                  <Card>
+                    <CardHeader className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">
+                          {u.document_title}
+                        </div>
+                        <div className="text-sm text-slate-600 truncate">
+                          {u.original_filename}
+                        </div>
+                      </div>
+
+                      <LinkButton
+                        href={`/inbox/${sessionId}/${u.upload_id}`}
+                        prefetch={false}
+                        size="sm"
+                      >
+                        View
+                      </LinkButton>
+                    </CardHeader>
+
+                    <CardContent>
+                      <div className="text-sm text-red-700">
+                        Reason: {u.denial_reason ?? "(none recorded)"}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {summary.denied.length > 0 ? (
+          <form
+            action={requestReplacementsAction.bind(null, sessionId)}
+            className="space-y-2"
+          >
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="send_email_now" value="1" />
+              Send replacement link email to client now
+            </label>
+
+            <Button variant="primary">
+              Request replacements for denied files
+            </Button>
+          </form>
+        ) : null}
       </div>
-
-      {error ? (
-        <div className="border border-red-300 bg-red-50 text-red-800 rounded-lg p-3 text-sm">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="border rounded-xl p-4 space-y-1">
-        <div className="text-sm">
-          Accepted: <span className="font-medium">{acceptedCount}</span> ·
-          Denied: <span className="font-medium">{deniedCount}</span>
-        </div>
-        <div className="text-xs opacity-60">
-          Accepted files remain downloadable until their expiry time.
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <h2 className="font-medium">Accepted</h2>
-        {summary.accepted.length === 0 ? (
-          <div className="opacity-70 text-sm">None</div>
-        ) : (
-          <ul className="space-y-2">
-            {summary.accepted.map((u) => (
-              <li
-                key={`accepted-${u.upload_id}`}
-                className="border rounded-xl p-4"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{u.document_title}</div>
-                    <div className="text-sm opacity-70 truncate">
-                      {u.original_filename}
-                    </div>
-                    <div className="text-xs opacity-60">
-                      {u.delete_after_at ? expiresInLabel(u.delete_after_at) : "—"}
-                    </div>
-                  </div>
-
-                  <Link
-                    className="underline shrink-0"
-                    href={`/inbox/${sessionId}/${u.upload_id}`}
-                    prefetch={false}
-                  >
-                    View
-                  </Link>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <h2 className="font-medium">Denied</h2>
-        {summary.denied.length === 0 ? (
-          <div className="opacity-70 text-sm">None</div>
-        ) : (
-          <ul className="space-y-2">
-            {summary.denied.map((u) => (
-              <li
-                key={`denied-${u.upload_id}`}
-                className="border rounded-xl p-4 space-y-2"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{u.document_title}</div>
-                    <div className="text-sm opacity-70 truncate">
-                      {u.original_filename}
-                    </div>
-                  </div>
-
-                  <Link
-                    className="underline shrink-0"
-                    href={`/inbox/${sessionId}/${u.upload_id}`}
-                    prefetch={false}
-                  >
-                    View
-                  </Link>
-                </div>
-
-                {u.denial_reason ? (
-                  <div className="text-sm text-red-700">
-                    Reason: <span className="opacity-90">{u.denial_reason}</span>
-                  </div>
-                ) : (
-                  <div className="text-sm text-red-700">Reason: (none recorded)</div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {summary.denied.length > 0 ? (
-        <form
-          action={requestReplacementsAction.bind(null, sessionId)}
-          className="space-y-2"
-        >
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="send_email_now" value="1" />
-            Send replacement link email to client now
-          </label>
-
-          <button className="border rounded-lg px-4 py-2">
-            Request replacements for denied files
-          </button>
-        </form>
-      ) : null}
     </main>
   );
 }

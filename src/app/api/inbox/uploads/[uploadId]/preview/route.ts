@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { supabaseServer } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { assertUuid } from "@/lib/validation/uuid";
-import { getUploadForDownload } from "@/lib/db/uploads";
+import { getUploadForDownload, HttpError } from "@/lib/db/uploads";
 
 /**
  * Sanitize filenames for inline Content-Disposition
@@ -52,7 +52,7 @@ export async function GET(
   let filename: string;
 
   try {
-    // 1. DB-layer logic: ownership + retention + viewed marking
+    // 1) DB-layer logic: ownership + retention + viewed marking
     const meta = await getUploadForDownload(uploadId);
     mime_type = meta.mime_type;
     filename = meta.filename;
@@ -64,28 +64,34 @@ export async function GET(
       );
     }
 
-    // 2. Storage signing (service role)
+    // 2) Storage signing (service role)
     const admin = supabaseAdmin();
-
     const { data, error } = await admin.storage
       .from("client_uploads")
-      .createSignedUrl(meta.storage_key, 60, {
-        download: false,
-      });
+      .createSignedUrl(meta.storage_key, 60, { download: false });
 
     if (error || !data?.signedUrl) {
-      throw new Error(error?.message || "Could not sign preview URL");
+      const msg = error?.message || "Could not sign preview URL";
+      return NextResponse.json({ error: msg }, { status: 500 });
     }
 
     signedUrl = data.signedUrl;
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not create signed url";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const status = e instanceof HttpError ? e.status : 500;
+    return NextResponse.json({ error: msg }, { status });
   }
 
   // Fetch from storage and stream back same-origin
   const fileRes = await fetch(signedUrl);
+
   if (!fileRes.ok || !fileRes.body) {
+    if (fileRes.status === 404) {
+      return NextResponse.json(
+        { error: "File not found in storage" },
+        { status: 404 }
+      );
+    }
     return NextResponse.json(
       { error: "Could not fetch file from storage" },
       { status: 502 }
@@ -101,7 +107,9 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": contentType,
-      "Content-Disposition": `inline; filename="${safeInlineFilename(filename)}"`,
+      "Content-Disposition": `inline; filename="${safeInlineFilename(
+        filename
+      )}"`,
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
     },
